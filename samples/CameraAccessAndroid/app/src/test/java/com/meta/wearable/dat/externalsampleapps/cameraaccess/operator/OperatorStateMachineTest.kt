@@ -122,6 +122,36 @@ class OperatorStateMachineTest {
     }
 
     @Test
+    fun awaitingConfirmationInvalidatesOnDisconnect() {
+        var state = OperatorStateMachine.State()
+
+        state = OperatorStateMachine.propose(state, context("call-disconnect"), "execute", "Send update")
+        state = OperatorStateMachine.validate(state, "call-disconnect")
+        state = OperatorStateMachine.awaitConfirmation(state, "call-disconnect", "Needs approval")
+        state = OperatorStateMachine.invalidate(state, "call-disconnect", "disconnect")
+
+        val invalidated = assertIs<OperatorStateMachine.OperatorState.Invalidated>(
+            state.calls.getValue("call-disconnect")
+        )
+        assertEquals("disconnect", invalidated.reason)
+    }
+
+    @Test
+    fun confirmOnInvalidatedCallIsNoOp() {
+        var state = OperatorStateMachine.State()
+
+        state = OperatorStateMachine.propose(state, context("call-invalidated"), "execute", "Send update")
+        state = OperatorStateMachine.validate(state, "call-invalidated")
+        state = OperatorStateMachine.awaitConfirmation(state, "call-invalidated", "Needs approval")
+        state = OperatorStateMachine.invalidate(state, "call-invalidated", "disconnect")
+
+        val invalidatedBeforeConfirm = state.calls.getValue("call-invalidated")
+        state = OperatorStateMachine.confirm(state, "call-invalidated")
+
+        assertEquals(invalidatedBeforeConfirm, state.calls.getValue("call-invalidated"))
+    }
+
+    @Test
     fun invalidateNewCreatesInvalidatedStateWithoutProposal() {
         var state = OperatorStateMachine.State()
 
