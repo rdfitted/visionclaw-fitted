@@ -18,39 +18,52 @@ object ConfirmationPolicy {
         val intentType = IntentType.from(intent)
         return when (SettingsManager.confirmationPolicyFlow.value) {
             OperatorConfirmationPolicy.Minimal -> Tier.Implicit
-            OperatorConfirmationPolicy.Standard -> intentType.standardTier(sessionState)
+            OperatorConfirmationPolicy.Standard -> intentType.standardTier(intent, sessionState)
             OperatorConfirmationPolicy.AlwaysConfirmOutbound ->
-                intentType.alwaysOutboundTier(sessionState)
+                intentType.alwaysOutboundTier(intent, sessionState)
         }
     }
 
     private enum class IntentType {
         Search,
         ConfirmPending,
+        SendMessage,
+        SetReminder,
+        CaptureTask,
         OutboundMessage,
         Transactional,
         Destructive,
         DeviceControl,
-        GeneralExecute;
+        GeneralExecute,
+        UndoCompensation;
 
-        fun standardTier(sessionState: SessionStateManager): Tier = when (this) {
+        fun standardTier(intent: GeminiFunctionCall, sessionState: SessionStateManager): Tier = when (this) {
             Search,
             ConfirmPending,
-            GeneralExecute -> Tier.Implicit
+            SetReminder,
+            CaptureTask,
+            GeneralExecute,
+            UndoCompensation -> Tier.Implicit
+
+            SendMessage -> sendMessageTier(intent, sessionState)
             OutboundMessage,
             Transactional,
             Destructive,
             DeviceControl -> Tier.ConditionalConfirm(prompt(sessionState))
         }
 
-        fun alwaysOutboundTier(sessionState: SessionStateManager): Tier = when (this) {
-            OutboundMessage -> Tier.AlwaysConfirm
-            else -> standardTier(sessionState)
+        fun alwaysOutboundTier(intent: GeminiFunctionCall, sessionState: SessionStateManager): Tier = when (this) {
+            OutboundMessage,
+            SendMessage -> Tier.AlwaysConfirm
+            else -> standardTier(intent, sessionState)
         }
 
         private fun prompt(sessionState: SessionStateManager): String = when (this) {
             Search -> ""
             ConfirmPending -> ""
+            SendMessage -> ""
+            SetReminder -> ""
+            CaptureTask -> ""
             OutboundMessage -> {
                 val recipient = sessionState.bestRecentRecipient()
                 if (recipient != null) {
@@ -67,6 +80,24 @@ object ConfirmationPolicy {
                 "Confirm the device or automation change before proceeding."
             GeneralExecute ->
                 "Confirm before taking this action."
+            UndoCompensation ->
+                ""
+        }
+
+        private fun sendMessageTier(
+            intent: GeminiFunctionCall,
+            sessionState: SessionStateManager
+        ): Tier {
+            val payload = StructuredToolPayloads.parseSendMessagePayload(intent.args)
+                ?: return Tier.AlwaysConfirm
+            val assessment = StructuredToolPayloads.assessSendMessage(payload, sessionState)
+            return when {
+                assessment.isSensitive || assessment.isNewRecipient -> Tier.AlwaysConfirm
+                assessment.isGroupOrAmbiguous ->
+                    Tier.ConditionalConfirm(StructuredToolPayloads.buildSendMessagePrompt(payload))
+                assessment.isFrequentContactShortMessage -> Tier.Implicit
+                else -> Tier.ConditionalConfirm(StructuredToolPayloads.buildSendMessagePrompt(payload))
+            }
         }
 
         companion object {
@@ -87,9 +118,13 @@ object ConfirmationPolicy {
                 RegexOption.IGNORE_CASE
             )
 
-            fun from(intent: GeminiFunctionCall): IntentType = when (intent.name) {
-                "search_web" -> Search
-                "confirm_pending" -> ConfirmPending
+            fun from(intent: GeminiFunctionCall): IntentType = when {
+                intent.args[StructuredToolPayloads.OPERATOR_UNDO_KEY] == true -> UndoCompensation
+                intent.name == "search_web" -> Search
+                intent.name == "confirm_pending" -> ConfirmPending
+                intent.name == "send_message" -> SendMessage
+                intent.name == "set_reminder" -> SetReminder
+                intent.name == "capture_task" -> CaptureTask
                 else -> fromTask(
                     (intent.args["task"] as? String)
                         ?.takeIf(String::isNotBlank)

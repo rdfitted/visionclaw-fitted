@@ -177,6 +177,77 @@ class ConfirmationPolicyTest {
         }
     }
 
+    @Test
+    fun sendMessageToolEscalatesNewRecipientsAndSensitiveContent() {
+        val sessionStateManager = SessionStateManager(TestBridge()).apply { reset("session-1") }
+
+        assertAlwaysConfirm(
+            GeminiFunctionCall(
+                id = "send-new-recipient",
+                name = "send_message",
+                args = mapOf("recipient" to "Jordan", "content" to "On my way")
+            ),
+            sessionStateManager
+        )
+
+        sessionStateManager.observeText("Sam Carter sam@example.com")
+        assertAlwaysConfirm(
+            GeminiFunctionCall(
+                id = "send-sensitive",
+                name = "send_message",
+                args = mapOf(
+                    "recipient" to "Sam Carter",
+                    "content" to "My bank account number is 1234",
+                    "channel" to "chat"
+                )
+            ),
+            sessionStateManager
+        )
+    }
+
+    @Test
+    fun sendMessageToolUsesImplicitTierForShortKnownContactMessages() {
+        val sessionStateManager = SessionStateManager(TestBridge()).apply {
+            reset("session-1")
+            observeText("Sam Carter sam@example.com")
+        }
+
+        assertImplicit(
+            GeminiFunctionCall(
+                id = "send-known-contact",
+                name = "send_message",
+                args = mapOf(
+                    "recipient" to "Sam Carter",
+                    "content" to "Running 5 late",
+                    "channel" to "sms"
+                )
+            ),
+            sessionStateManager
+        )
+    }
+
+    @Test
+    fun reminderAndTaskToolsStayImplicit() {
+        val sessionStateManager = SessionStateManager(TestBridge()).apply { reset("session-1") }
+
+        assertImplicit(
+            GeminiFunctionCall(
+                id = "reminder-1",
+                name = "set_reminder",
+                args = mapOf("when" to "tomorrow at 3pm", "what" to "stretch")
+            ),
+            sessionStateManager
+        )
+        assertImplicit(
+            GeminiFunctionCall(
+                id = "task-1",
+                name = "capture_task",
+                args = mapOf("title" to "Buy batteries", "priority" to "med")
+            ),
+            sessionStateManager
+        )
+    }
+
     private fun assertImplicit(call: GeminiFunctionCall, sessionStateManager: SessionStateManager) {
         assertIs<ConfirmationPolicy.Tier.Implicit>(ConfirmationPolicy.evaluate(call, sessionStateManager))
     }
