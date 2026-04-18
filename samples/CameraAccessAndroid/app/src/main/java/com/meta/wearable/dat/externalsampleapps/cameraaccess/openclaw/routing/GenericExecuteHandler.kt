@@ -8,7 +8,11 @@ class GenericExecuteHandler(
     private val bridge: OpenClawBridge
 ) : ToolHandler {
     override suspend fun execute(call: GeminiFunctionCall): ToolResult {
-        val task = extractTask(call) ?: return ToolResult.Failure("Missing task argument")
+        val task = extractTask(call)?.takeIf(String::isNotBlank)
+            ?: return ToolResult.Failure(
+                error = "Missing task argument",
+                hint = "Provide a non-empty task argument describing the action to perform."
+            )
 
         return try {
             bridge.delegateTask(
@@ -17,7 +21,10 @@ class GenericExecuteHandler(
                 toolName = call.name
             )
         } catch (e: Exception) {
-            ToolResult.Failure(e.message ?: "Unknown error in OpenClawBridge")
+            ToolResult.Failure(
+                error = e.message ?: "Unknown error in OpenClawBridge",
+                hint = "Check the OpenClaw gateway connection and retry the action."
+            )
         }
     }
 

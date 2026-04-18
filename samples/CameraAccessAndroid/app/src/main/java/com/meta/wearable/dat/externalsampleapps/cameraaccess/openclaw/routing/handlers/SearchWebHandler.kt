@@ -9,7 +9,11 @@ class SearchWebHandler(
     private val bridge: OpenClawBridge
 ) : ToolHandler {
     override suspend fun execute(call: GeminiFunctionCall): ToolResult {
-        val query = call.args["query"] as? String ?: return ToolResult.Failure("Missing query argument")
+        val query = (call.args["query"] as? String)?.takeIf(String::isNotBlank)
+            ?: return ToolResult.Failure(
+                error = "Missing query argument",
+                hint = "Provide a non-empty query argument."
+            )
 
         return try {
             bridge.delegateTask(
@@ -18,7 +22,10 @@ class SearchWebHandler(
                 toolName = call.name
             )
         } catch (e: Exception) {
-            ToolResult.Failure(e.message ?: "Unknown error in OpenClawBridge")
+            ToolResult.Failure(
+                error = e.message ?: "Unknown error in OpenClawBridge",
+                hint = "Retry with a specific fact-finding query after the OpenClaw gateway is reachable."
+            )
         }
     }
 }

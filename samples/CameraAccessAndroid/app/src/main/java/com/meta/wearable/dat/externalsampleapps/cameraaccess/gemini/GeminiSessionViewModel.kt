@@ -206,7 +206,8 @@ class GeminiSessionViewModel : ViewModel() {
     }
 
     override fun onCleared() {
-        super.onCleared()
         stopSession()
+        openClawBridge.shutdown()
+        super.onCleared()
     }
 }

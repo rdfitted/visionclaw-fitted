@@ -46,7 +46,16 @@ class ToolCallRouter(
                 "missing_task_payload"
             )
             bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, "Missing task payload"))
-            sendResponse(buildToolResponse(callId, callName, ToolResult.Failure("Missing task payload")))
+            sendResponse(
+                buildToolResponse(
+                    callId,
+                    callName,
+                    ToolResult.Failure(
+                        error = "Missing task payload",
+                        hint = "Provide a non-empty task argument describing the action to perform."
+                    )
+                )
+            )
             return
         }
 
@@ -60,8 +69,9 @@ class ToolCallRouter(
             )
             val failureCount = operatorState.consecutiveFailures
             val errorResult = ToolResult.Failure(
-                "Tool execution is temporarily unavailable after $failureCount consecutive failures. " +
-                "Please tell the user you cannot complete this action right now and suggest they check their OpenClaw gateway connection."
+                error = "Tool execution is temporarily unavailable after $failureCount consecutive failures. " +
+                    "Please tell the user you cannot complete this action right now and suggest they check their OpenClaw gateway connection.",
+                hint = "Check the OpenClaw gateway connection, wait for failures to stop, then retry the action."
             )
             bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, "Circuit breaker open"))
             sendResponse(buildToolResponse(callId, callName, errorResult))

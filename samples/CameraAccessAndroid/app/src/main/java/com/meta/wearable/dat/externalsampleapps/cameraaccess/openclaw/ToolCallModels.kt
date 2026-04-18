@@ -60,11 +60,17 @@ data class GeminiToolCallCancellation(
 
 sealed class ToolResult {
     data class Success(val result: String) : ToolResult()
-    data class Failure(val error: String) : ToolResult()
+    data class Failure(
+        val error: String,
+        val hint: String? = null
+    ) : ToolResult()
 
     fun toJSON(): JSONObject = when (this) {
         is Success -> JSONObject().put("result", result)
-        is Failure -> JSONObject().put("error", error)
+        is Failure -> JSONObject().apply {
+            put("error", error)
+            hint?.let { put("hint", it) }
+        }
     }
 }
 

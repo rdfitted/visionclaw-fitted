@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -95,6 +96,10 @@ class OpenClawBridge {
     fun resetSession() {
         conversationHistory.clear()
         Log.d(TAG, "Session reset (key retained: $sessionKey)")
+    }
+
+    fun shutdown() {
+        flowScope.cancel()
     }
 
     suspend fun delegateTask(

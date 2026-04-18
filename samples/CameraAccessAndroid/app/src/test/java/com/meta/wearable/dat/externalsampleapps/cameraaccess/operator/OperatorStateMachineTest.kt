@@ -30,6 +30,22 @@ class OperatorStateMachineTest {
     }
 
     @Test
+    fun confirmTransitionReturnsValidatedBeforeDispatching() {
+        var state = OperatorStateMachine.State()
+
+        state = OperatorStateMachine.propose(state, context("call-confirm"), "execute", "Send update")
+        state = OperatorStateMachine.validate(state, "call-confirm")
+        state = OperatorStateMachine.awaitConfirmation(state, "call-confirm", "Needs confirmation")
+
+        state = OperatorStateMachine.confirm(state, "call-confirm")
+        val validated = assertIs<OperatorStateMachine.OperatorState.Validated>(state.calls.getValue("call-confirm"))
+        assertEquals("Send update", validated.task)
+
+        state = OperatorStateMachine.dispatch(state, "call-confirm")
+        assertIs<OperatorStateMachine.OperatorState.Dispatched>(state.calls.getValue("call-confirm"))
+    }
+
+    @Test
     fun proposedValidatedDispatchedFailedFlowOpensCircuitBreakerOnThirdFailure() {
         var state = OperatorStateMachine.State()
 
@@ -87,6 +103,20 @@ class OperatorStateMachineTest {
 
         val invalidated = assertIs<OperatorStateMachine.OperatorState.Invalidated>(state.calls.getValue("call-1"))
         assertEquals("Missing task payload", invalidated.reason)
+    }
+
+    @Test
+    fun fallbackTransitionStoresReasonWithoutChangingCallState() {
+        var state = OperatorStateMachine.State()
+
+        state = OperatorStateMachine.propose(state, context("call-fallback"), "execute", "Find the weather")
+        state = OperatorStateMachine.validate(state, "call-fallback")
+        val beforeFallback = state.calls.getValue("call-fallback")
+
+        state = OperatorStateMachine.fallback(state, "call-fallback", "kill_switch")
+
+        assertEquals("kill_switch", state.lastFallbackReason)
+        assertEquals(beforeFallback, state.calls.getValue("call-fallback"))
     }
 
     @Test

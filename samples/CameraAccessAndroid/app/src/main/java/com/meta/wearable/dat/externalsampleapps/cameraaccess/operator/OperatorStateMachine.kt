@@ -8,7 +8,8 @@ object OperatorStateMachine {
     data class State(
         val calls: Map<ToolCallId, OperatorState> = emptyMap(),
         val consecutiveFailures: Int = 0,
-        val circuitBreakerOpen: Boolean = false
+        val circuitBreakerOpen: Boolean = false,
+        val lastFallbackReason: String? = null
     )
 
     sealed interface OperatorState {
@@ -317,7 +318,7 @@ object OperatorStateMachine {
             latencyMs = 0,
             reason = reason
         )
-        return state
+        return state.copy(lastFallbackReason = reason)
     }
 
     private inline fun <reified T : OperatorState> State.requireCall(id: ToolCallId): T {
