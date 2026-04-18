@@ -285,8 +285,8 @@ open class GeminiLiveService {
             // Setup complete
             if (json.has("setupComplete")) {
                 _connectionState.value = GeminiConnectionState.Ready
-                resolveConnect(true)
                 flushReconnectVoiceNoteIfNeeded()
+                resolveConnect(true)
                 return
             }
 
