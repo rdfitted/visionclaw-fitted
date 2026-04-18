@@ -1,9 +1,13 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.gemini
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.Request
 import okhttp3.WebSocket
@@ -24,6 +28,32 @@ class GeminiLiveServiceTest {
             "{\"clientContent\":{\"turns\":[{\"role\":\"user\",\"parts\":[{\"text\":\"Reconnect reminder\"}]}]}}",
             webSocket.sentMessages.single()
         )
+    }
+
+    @Test
+    fun sendTextMessageReturnsFalseWhenSendExecutorTimesOut() {
+        val service = TimeoutTestingGeminiLiveService(sendTextTimeoutMs = 25L)
+        val webSocket = FakeWebSocket(sendResult = true)
+        val blockerStarted = CountDownLatch(1)
+        val releaseBlocker = CountDownLatch(1)
+        val sendExecutor = sendExecutor(service)
+
+        setConnectionState(service, GeminiConnectionState.Ready)
+        setWebSocket(service, webSocket)
+
+        val blocker = sendExecutor.submit {
+            blockerStarted.countDown()
+            releaseBlocker.await(1, TimeUnit.SECONDS)
+        }
+
+        assertTrue(blockerStarted.await(1, TimeUnit.SECONDS))
+        assertFalse(service.sendTextMessage("Reconnect reminder"))
+
+        releaseBlocker.countDown()
+        blocker.get(1, TimeUnit.SECONDS)
+        sendExecutor.submit { }.get(1, TimeUnit.SECONDS)
+
+        assertTrue(webSocket.sentMessages.isEmpty())
     }
 
     @Test
@@ -64,6 +94,12 @@ class GeminiLiveServiceTest {
         field.set(service, webSocket)
     }
 
+    private fun sendExecutor(service: GeminiLiveService): ExecutorService {
+        val field = GeminiLiveService::class.java.getDeclaredField("sendExecutor")
+        field.isAccessible = true
+        return field.get(service) as ExecutorService
+    }
+
     private fun setPendingReconnectVoiceNote(service: GeminiLiveService, note: String?) {
         val field = GeminiLiveService::class.java.getDeclaredField("pendingReconnectVoiceNote")
         field.isAccessible = true
@@ -90,6 +126,13 @@ class GeminiLiveServiceTest {
         override fun sendTextMessage(text: String): Boolean {
             sentMessages += text
             return sendResult
+        }
+    }
+
+    private class TimeoutTestingGeminiLiveService(
+        override val sendTextTimeoutMs: Long
+    ) : GeminiLiveService() {
+        override fun logSendTextError(message: String, throwable: Throwable?) {
         }
     }
 

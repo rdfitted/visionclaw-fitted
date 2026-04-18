@@ -11,9 +11,11 @@ import java.io.ByteArrayOutputStream
 import java.util.Timer
 import java.util.TimerTask
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.Future
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +39,7 @@ sealed class GeminiConnectionState {
 open class GeminiLiveService {
     companion object {
         private const val TAG = "GeminiLiveService"
+        internal const val SEND_TEXT_TIMEOUT_MS = 1_000L
     }
 
     private val _connectionState = MutableStateFlow<GeminiConnectionState>(GeminiConnectionState.Disconnected)
@@ -69,6 +72,17 @@ open class GeminiLiveService {
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(10, TimeUnit.SECONDS)
         .build()
+
+    internal open val sendTextTimeoutMs: Long
+        get() = SEND_TEXT_TIMEOUT_MS
+
+    internal open fun logSendTextError(message: String, throwable: Throwable? = null) {
+        if (throwable == null) {
+            Log.e(TAG, message)
+        } else {
+            Log.e(TAG, message, throwable)
+        }
+    }
 
     fun connect(callback: (Boolean) -> Unit) {
         val url = GeminiConfig.websocketURL()
@@ -195,8 +209,9 @@ open class GeminiLiveService {
     open fun sendTextMessage(text: String): Boolean {
         if (_connectionState.value != GeminiConnectionState.Ready) return false
         val currentWebSocket = webSocket ?: return false
+        var sendFuture: Future<Boolean>? = null
         return try {
-            sendExecutor.submit<Boolean> {
+            sendFuture = sendExecutor.submit<Boolean> {
                 val json = JSONObject().apply {
                     put("clientContent", JSONObject().apply {
                         put("turns", JSONArray().put(JSONObject().apply {
@@ -208,16 +223,21 @@ open class GeminiLiveService {
                     })
                 }
                 currentWebSocket.send(json.toString())
-            }.get()
+            }
+            sendFuture.get(sendTextTimeoutMs, TimeUnit.MILLISECONDS)
         } catch (e: RejectedExecutionException) {
-            Log.e(TAG, "Failed to dispatch text message send", e)
+            logSendTextError("Failed to dispatch text message send", e)
+            false
+        } catch (e: TimeoutException) {
+            sendFuture?.cancel(true)
+            logSendTextError("Timed out while sending text message", e)
             false
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            Log.e(TAG, "Interrupted while sending text message", e)
+            logSendTextError("Interrupted while sending text message", e)
             false
         } catch (e: ExecutionException) {
-            Log.e(TAG, "Text message send failed", e.cause ?: e)
+            logSendTextError("Text message send failed", e.cause ?: e)
             false
         }
     }
