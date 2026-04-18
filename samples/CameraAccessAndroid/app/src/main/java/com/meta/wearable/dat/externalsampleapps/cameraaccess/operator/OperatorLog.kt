@@ -1,6 +1,5 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.operator
 
-import org.json.JSONObject
 import timber.log.Timber
 
 data class OperatorContext(
@@ -42,19 +41,63 @@ object OperatorLog {
         latencyMs: Long,
         reason: String? = null
     ) {
-        val payload = JSONObject().apply {
-            put("sessionId", context.sessionId)
-            put("turnId", context.turnId)
-            put("toolCallId", context.toolCallId)
-            put("proposalId", context.proposalId)
-            put("event", event.wireName)
-            put("toolName", toolName)
-            put("fromState", fromState)
-            put("toState", toState)
-            put("latencyMs", latencyMs.coerceAtLeast(0))
-            reason?.let { put("reason", it) }
-        }
+        Timber.tag(TAG).i(buildPayload(
+            context = context,
+            event = event,
+            toolName = toolName,
+            fromState = fromState,
+            toState = toState,
+            latencyMs = latencyMs,
+            reason = reason
+        ))
+    }
 
-        Timber.tag(TAG).i(payload.toString())
+    private fun buildPayload(
+        context: OperatorContext,
+        event: OperatorEvent,
+        toolName: String,
+        fromState: String,
+        toState: String,
+        latencyMs: Long,
+        reason: String?
+    ): String {
+        val fields = linkedMapOf(
+            "sessionId" to context.sessionId,
+            "turnId" to context.turnId,
+            "toolCallId" to context.toolCallId,
+            "proposalId" to context.proposalId,
+            "event" to event.wireName,
+            "toolName" to toolName,
+            "fromState" to fromState,
+            "toState" to toState,
+            "latencyMs" to latencyMs.coerceAtLeast(0)
+        )
+        reason?.let { fields["reason"] = it }
+
+        return fields.entries.joinToString(
+            prefix = "{",
+            postfix = "}"
+        ) { (key, value) ->
+            val renderedValue = when (value) {
+                is Number, is Boolean -> value.toString()
+                else -> "\"${value.toString().escapeJson()}\""
+            }
+            "\"$key\":$renderedValue"
+        }
+    }
+
+    private fun String.escapeJson(): String = buildString(length) {
+        for (char in this@escapeJson) {
+            when (char) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\b' -> append("\\b")
+                '\u000C' -> append("\\f")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> append(char)
+            }
+        }
     }
 }

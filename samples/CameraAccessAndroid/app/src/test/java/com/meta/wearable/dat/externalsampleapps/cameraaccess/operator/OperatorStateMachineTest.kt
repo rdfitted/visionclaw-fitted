@@ -11,7 +11,7 @@ class OperatorStateMachineTest {
     fun proposedValidatedAwaitingConfirmationDispatchedCompletedFlowResetsCircuitBreaker() {
         var state = OperatorStateMachine.State(consecutiveFailures = 2, circuitBreakerOpen = false)
 
-        state = OperatorStateMachine.propose(state, "call-1", "execute", "Draft a reply")
+        state = OperatorStateMachine.propose(state, context("call-1"), "execute", "Draft a reply")
         assertIs<OperatorStateMachine.OperatorState.Proposed>(state.calls.getValue("call-1"))
 
         state = OperatorStateMachine.validate(state, "call-1")
@@ -35,7 +35,7 @@ class OperatorStateMachineTest {
 
         repeat(3) { index ->
             val callId = "failure-$index"
-            state = OperatorStateMachine.propose(state, callId, "execute", "Task $index")
+            state = OperatorStateMachine.propose(state, context(callId), "execute", "Task $index")
             state = OperatorStateMachine.validate(state, callId)
             state = OperatorStateMachine.dispatch(state, callId)
             state = OperatorStateMachine.fail(state, callId, "Boom $index")
@@ -52,9 +52,9 @@ class OperatorStateMachineTest {
     fun rejectTransitionPreservesIndependentCallState() {
         var state = OperatorStateMachine.State()
 
-        state = OperatorStateMachine.propose(state, "call-1", "execute", "One")
+        state = OperatorStateMachine.propose(state, context("call-1"), "execute", "One")
         state = OperatorStateMachine.validate(state, "call-1")
-        state = OperatorStateMachine.propose(state, "call-2", "execute", "Two")
+        state = OperatorStateMachine.propose(state, context("call-2"), "execute", "Two")
 
         state = OperatorStateMachine.reject(state, "call-1", "Circuit breaker open")
 
@@ -66,10 +66,10 @@ class OperatorStateMachineTest {
     fun cancelTransitionMarksOnlyTargetCallCancelled() {
         var state = OperatorStateMachine.State()
 
-        state = OperatorStateMachine.propose(state, "call-1", "execute", "One")
+        state = OperatorStateMachine.propose(state, context("call-1"), "execute", "One")
         state = OperatorStateMachine.validate(state, "call-1")
         state = OperatorStateMachine.dispatch(state, "call-1")
-        state = OperatorStateMachine.propose(state, "call-2", "execute", "Two")
+        state = OperatorStateMachine.propose(state, context("call-2"), "execute", "Two")
 
         state = OperatorStateMachine.cancel(state, "call-1", "User cancelled")
 
@@ -82,7 +82,7 @@ class OperatorStateMachineTest {
     fun invalidateTransitionStoresReason() {
         var state = OperatorStateMachine.State()
 
-        state = OperatorStateMachine.propose(state, "call-1", "execute", "")
+        state = OperatorStateMachine.propose(state, context("call-1"), "execute", "")
         state = OperatorStateMachine.invalidate(state, "call-1", "Missing task payload")
 
         val invalidated = assertIs<OperatorStateMachine.OperatorState.Invalidated>(state.calls.getValue("call-1"))
@@ -93,8 +93,8 @@ class OperatorStateMachineTest {
     fun concurrentProposalsRemainIndependentAcrossTransitions() {
         var state = OperatorStateMachine.State()
 
-        state = OperatorStateMachine.propose(state, "call-1", "execute", "Task one")
-        state = OperatorStateMachine.propose(state, "call-2", "execute", "Task two")
+        state = OperatorStateMachine.propose(state, context("call-1"), "execute", "Task one")
+        state = OperatorStateMachine.propose(state, context("call-2"), "execute", "Task two")
         state = OperatorStateMachine.validate(state, "call-1")
         state = OperatorStateMachine.dispatch(state, "call-1")
 
@@ -102,4 +102,10 @@ class OperatorStateMachineTest {
         val proposed = assertIs<OperatorStateMachine.OperatorState.Proposed>(state.calls.getValue("call-2"))
         assertEquals("Task two", proposed.task)
     }
+
+    private fun context(callId: String) = OperatorContext(
+        sessionId = "session-1",
+        turnId = "turn-$callId",
+        toolCallId = callId
+    )
 }

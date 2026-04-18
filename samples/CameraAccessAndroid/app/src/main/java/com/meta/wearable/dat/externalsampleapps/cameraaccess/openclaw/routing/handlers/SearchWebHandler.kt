@@ -5,12 +5,18 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBr
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ToolHandler
 
-class SearchWebHandler : ToolHandler {
+class SearchWebHandler(
+    private val bridge: OpenClawBridge
+) : ToolHandler {
     override suspend fun execute(call: GeminiFunctionCall): ToolResult {
         val query = call.args["query"] as? String ?: return ToolResult.Failure("Missing query argument")
+
         return try {
-            val response = OpenClawBridge.delegateTask("search: $query")
-            ToolResult.Success(response)
+            bridge.delegateTask(
+                callId = call.id,
+                task = "search: $query",
+                toolName = call.name
+            )
         } catch (e: Exception) {
             ToolResult.Failure(e.message ?: "Unknown error in OpenClawBridge")
         }

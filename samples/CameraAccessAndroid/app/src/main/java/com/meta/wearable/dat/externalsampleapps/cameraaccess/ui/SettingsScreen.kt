@@ -72,7 +72,7 @@ fun SettingsScreen(
 
     fun save() {
         SettingsManager.geminiAPIKey = geminiAPIKey.trim()
-        SettingsManager.systemPrompt = systemPrompt.trim()
+        SettingsManager.geminiSystemPrompt = systemPrompt.trim()
         SettingsManager.openClawHost = openClawHost.trim()
         openClawPort.trim().toIntOrNull()?.let { SettingsManager.openClawPort = it }
         SettingsManager.openClawHookToken = openClawHookToken.trim()

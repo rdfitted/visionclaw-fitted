@@ -1,9 +1,8 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw
 
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorContext
-import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorFallbackReason
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorStateMachine
-import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -13,13 +12,14 @@ import org.json.JSONObject
 
 class ToolCallRouter(
     private val bridge: OpenClawBridge,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val intentRouter: IntentRouter = IntentRouter(bridge)
 ) {
     private val inFlightJobs = mutableMapOf<String, Job>()
     private var operatorState = OperatorStateMachine.State()
     private val turnCounter = AtomicLong(0)
 
-    fun handleToolCall(
+    fun dispatch(
         call: GeminiFunctionCall,
         sendResponse: (JSONObject) -> Unit
     ) {
@@ -52,20 +52,6 @@ class ToolCallRouter(
 
         operatorState = OperatorStateMachine.validate(operatorState, callId)
 
-        if (!SettingsManager.structuredIntentsEnabled) {
-            operatorState = OperatorStateMachine.fallback(
-                state = operatorState,
-                id = callId,
-                reason = OperatorFallbackReason.KILL_SWITCH
-            )
-        } else if (callName != "execute") {
-            operatorState = OperatorStateMachine.fallback(
-                state = operatorState,
-                id = callId,
-                reason = OperatorFallbackReason.NO_MATCHING_TOOL
-            )
-        }
-
         if (operatorState.circuitBreakerOpen) {
             operatorState = OperatorStateMachine.reject(
                 state = operatorState,
@@ -84,7 +70,15 @@ class ToolCallRouter(
 
         operatorState = OperatorStateMachine.dispatch(operatorState, callId)
         val job = scope.launch {
-            val result = bridge.delegateTask(callId = callId, task = taskDesc, toolName = callName)
+            val routingResult = intentRouter.route(call)
+            routingResult.fallbackReason?.let { reason ->
+                operatorState = OperatorStateMachine.fallback(
+                    state = operatorState,
+                    id = callId,
+                    reason = reason
+                )
+            }
+            val result = routingResult.result
 
             if (!coroutineContext[Job]!!.isCancelled) {
                 when (result) {

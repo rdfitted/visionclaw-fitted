@@ -6,10 +6,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawEventClient
-import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawConnectionState
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallStatus
-import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallRouter
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.stream.StreamingMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -44,6 +44,7 @@ class GeminiSessionViewModel : ViewModel() {
     private val eventClient = OpenClawEventClient()
     private var lastVideoFrameTime: Long = 0
     private var stateObservationJob: Job? = null
+    private var toolCallRouter: ToolCallRouter? = null
 
     var streamingMode: StreamingMode = StreamingMode.GLASSES
 
@@ -104,31 +105,20 @@ class GeminiSessionViewModel : ViewModel() {
         viewModelScope.launch {
             openClawBridge.checkConnection()
             openClawBridge.resetSession()
+            toolCallRouter = ToolCallRouter(openClawBridge, viewModelScope)
 
-            // Wire tool call handling through IntentRouter
             geminiService.onToolCall = { toolCall ->
                 viewModelScope.launch {
                     for (call in toolCall.functionCalls) {
-                        // Manually update status since IntentRouter is a simple singleton for now
-                        openClawBridge.updateToolCallStatus(ToolCallStatus.Executing(call.name))
-                        val result = IntentRouter.route(call)
-                        geminiService.sendToolResponse(result.toJSON())
-                        
-                        when (result) {
-                            is com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult.Success -> 
-                                openClawBridge.updateToolCallStatus(ToolCallStatus.Completed(call.name))
-                            is com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult.Failure -> 
-                                openClawBridge.updateToolCallStatus(ToolCallStatus.Failed(call.name, result.error))
+                        toolCallRouter?.dispatch(call) { response ->
+                            geminiService.sendToolResponse(response)
                         }
                     }
                 }
             }
 
             geminiService.onToolCallCancellation = { cancellation ->
-                // IntentRouter currently doesn't support cancellation, but we can update status
-                for (id in cancellation.ids) {
-                    openClawBridge.updateToolCallStatus(ToolCallStatus.Cancelled("Tool call $id"))
-                }
+                toolCallRouter?.cancelToolCalls(cancellation.ids)
             }
 
             // Observe service state
