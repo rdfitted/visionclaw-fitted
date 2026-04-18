@@ -65,7 +65,7 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
 
-    if (Timber.forest().isEmpty()) {
+    if (BuildConfig.DEBUG && Timber.forest().isEmpty()) {
       Timber.plant(Timber.DebugTree())
     }
 

@@ -1,9 +1,12 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.operator
 
+import timber.log.Timber
+
 typealias ToolCallId = String
 
 object OperatorStateMachine {
     const val MAX_CONSECUTIVE_FAILURES = 3
+    private const val TAG = "OperatorStateMachine"
 
     data class State(
         val calls: Map<ToolCallId, OperatorState> = emptyMap(),
@@ -115,7 +118,7 @@ object OperatorStateMachine {
     }
 
     fun validate(state: State, id: ToolCallId, nowMs: Long = System.currentTimeMillis()): State {
-        val proposed = state.requireCall<OperatorState.Proposed>(id)
+        val proposed = state.requireCallOrNull<OperatorState.Proposed>(id) ?: return state
         return state.transition(
             from = proposed,
             to = OperatorState.Validated(
@@ -135,7 +138,7 @@ object OperatorStateMachine {
         reason: String,
         nowMs: Long = System.currentTimeMillis()
     ): State {
-        val validated = state.requireCall<OperatorState.Validated>(id)
+        val validated = state.requireCallOrNull<OperatorState.Validated>(id) ?: return state
         return state.transition(
             from = validated,
             to = OperatorState.AwaitingConfirmation(
@@ -152,7 +155,7 @@ object OperatorStateMachine {
     }
 
     fun confirm(state: State, id: ToolCallId, nowMs: Long = System.currentTimeMillis()): State {
-        val awaiting = state.requireCall<OperatorState.AwaitingConfirmation>(id)
+        val awaiting = state.requireCallOrNull<OperatorState.AwaitingConfirmation>(id) ?: return state
         return state.transition(
             from = awaiting,
             to = OperatorState.Validated(
@@ -167,31 +170,31 @@ object OperatorStateMachine {
     }
 
     fun dispatch(state: State, id: ToolCallId, nowMs: Long = System.currentTimeMillis()): State {
-        val call = state.calls[id] ?: error("Missing call state for $id")
-        val dispatched = when (call) {
-            is OperatorState.Validated -> {
-                OperatorState.Dispatched(
-                    context = call.context,
-                    id = id,
-                    toolName = call.toolName,
-                    task = call.task,
-                    enteredAtMs = nowMs
-                )
-            }
+        val call = state.calls[id]
+        val validated = when (call) {
+            is OperatorState.Validated -> call
             is OperatorState.AwaitingConfirmation -> {
-                OperatorState.Dispatched(
-                    context = call.context,
-                    id = id,
-                    toolName = call.toolName,
-                    task = call.task,
-                    enteredAtMs = nowMs
-                )
+                Timber.tag(TAG).w("Ignoring dispatch for %s until confirm() runs", id)
+                return state
             }
-            else -> error("Cannot dispatch ${call::class.simpleName} for $id")
+            null -> {
+                Timber.tag(TAG).w("Ignoring dispatch for missing call state %s", id)
+                return state
+            }
+            else -> {
+                Timber.tag(TAG).w("Ignoring dispatch for %s in state %s", id, call::class.simpleName)
+                return state
+            }
         }
         return state.transition(
-            from = call,
-            to = dispatched,
+            from = validated,
+            to = OperatorState.Dispatched(
+                context = validated.context,
+                id = id,
+                toolName = validated.toolName,
+                task = validated.task,
+                enteredAtMs = nowMs
+            ),
             event = OperatorEvent.DISPATCHED
         )
     }
@@ -202,7 +205,7 @@ object OperatorStateMachine {
         result: String,
         nowMs: Long = System.currentTimeMillis()
     ): State {
-        val dispatched = state.requireCall<OperatorState.Dispatched>(id)
+        val dispatched = state.requireCallOrNull<OperatorState.Dispatched>(id) ?: return state
         return state.transition(
             from = dispatched,
             to = OperatorState.Completed(
@@ -224,7 +227,7 @@ object OperatorStateMachine {
         errorMessage: String,
         nowMs: Long = System.currentTimeMillis()
     ): State {
-        val dispatched = state.requireCall<OperatorState.Dispatched>(id)
+        val dispatched = state.requireCallOrNull<OperatorState.Dispatched>(id) ?: return state
         val failureCount = state.consecutiveFailures + 1
         val circuitBreakerOpen = failureCount >= MAX_CONSECUTIVE_FAILURES
         return state.transition(
@@ -250,7 +253,11 @@ object OperatorStateMachine {
         reason: String,
         nowMs: Long = System.currentTimeMillis()
     ): State {
-        val call = state.calls[id] ?: error("Missing call state for $id")
+        val call = state.calls[id]
+        if (call == null) {
+            Timber.tag(TAG).w("Ignoring reject for missing call state %s", id)
+            return state
+        }
         return state.transition(
             from = call,
             to = OperatorState.Rejected(
@@ -271,7 +278,11 @@ object OperatorStateMachine {
         reason: String? = null,
         nowMs: Long = System.currentTimeMillis()
     ): State {
-        val call = state.calls[id] ?: error("Missing call state for $id")
+        val call = state.calls[id]
+        if (call == null) {
+            Timber.tag(TAG).w("Ignoring cancel for missing call state %s", id)
+            return state
+        }
         return state.transition(
             from = call,
             to = OperatorState.Cancelled(
@@ -292,7 +303,11 @@ object OperatorStateMachine {
         reason: String,
         nowMs: Long = System.currentTimeMillis()
     ): State {
-        val call = state.calls[id] ?: error("Missing call state for $id")
+        val call = state.calls[id]
+        if (call == null) {
+            Timber.tag(TAG).w("Ignoring invalidate for missing call state %s", id)
+            return state
+        }
         return state.transition(
             from = call,
             to = OperatorState.Invalidated(
@@ -307,8 +322,33 @@ object OperatorStateMachine {
         )
     }
 
+    fun invalidateNew(
+        state: State,
+        context: OperatorContext,
+        toolName: String,
+        reason: String,
+        nowMs: Long = System.currentTimeMillis()
+    ): State {
+        return state.transition(
+            from = null,
+            to = OperatorState.Invalidated(
+                context = context,
+                id = context.toolCallId,
+                toolName = toolName,
+                reason = reason,
+                enteredAtMs = nowMs
+            ),
+            event = OperatorEvent.INVALIDATED,
+            reason = reason
+        )
+    }
+
     fun fallback(state: State, id: ToolCallId, reason: String): State {
-        val call = state.calls[id] ?: error("Missing call state for $id")
+        val call = state.calls[id]
+        if (call == null) {
+            Timber.tag(TAG).w("Ignoring fallback for missing call state %s", id)
+            return state
+        }
         OperatorLog.log(
             context = call.context,
             event = OperatorEvent.FALLBACK_TAKEN,
@@ -321,9 +361,24 @@ object OperatorStateMachine {
         return state.copy(lastFallbackReason = reason)
     }
 
-    private inline fun <reified T : OperatorState> State.requireCall(id: ToolCallId): T {
-        val call = calls[id] ?: error("Missing call state for $id")
-        return call as? T ?: error("Expected ${T::class.simpleName} for $id but found ${call::class.simpleName}")
+    private inline fun <reified T : OperatorState> State.requireCallOrNull(id: ToolCallId): T? {
+        val call = calls[id]
+        return when {
+            call == null -> {
+                Timber.tag(TAG).w("Ignoring %s transition for missing call state %s", T::class.simpleName, id)
+                null
+            }
+            call !is T -> {
+                Timber.tag(TAG).w(
+                    "Ignoring %s transition for %s in state %s",
+                    T::class.simpleName,
+                    id,
+                    call::class.simpleName
+                )
+                null
+            }
+            else -> call
+        }
     }
 
     private fun State.transition(

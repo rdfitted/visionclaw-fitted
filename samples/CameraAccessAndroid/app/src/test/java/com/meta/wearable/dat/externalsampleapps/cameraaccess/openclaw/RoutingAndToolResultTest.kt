@@ -3,10 +3,12 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ToolHandler
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ToolRegistry
+import kotlin.test.assertFailsWith
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 
 class RoutingAndToolResultTest {
@@ -60,6 +62,86 @@ class RoutingAndToolResultTest {
             "Provide a non-empty task argument describing the action to perform.",
             failure.hint
         )
+    }
+
+    @Test
+    fun genericExecuteTreatsBlankSearchQueryAsMissingTask() = runBlocking {
+        val handler = com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.GenericExecuteHandler(
+            OpenClawBridge()
+        )
+
+        val result = handler.execute(
+            GeminiFunctionCall(
+                id = "call-blank-search",
+                name = "search_web",
+                args = mapOf("query" to "   ")
+            )
+        )
+
+        val failure = assertIs<ToolResult.Failure>(result)
+        assertEquals("Missing task argument", failure.error)
+    }
+
+    @Test
+    fun toolDeclarationsDoNotExposeUnsupportedInvocationCondition() {
+        val searchWeb = ToolDeclarations.allDeclarationsJSON().getJSONObject(1)
+
+        assertFalse(searchWeb.has("invocation_condition"))
+        assertEquals("search_web", searchWeb.getString("name"))
+    }
+
+    @Test
+    fun searchWebHandlerRethrowsCancellation() {
+        runBlocking {
+            val handler = com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.handlers.SearchWebHandler(
+                bridge = object : OpenClawBridge() {
+                    override suspend fun delegateTask(
+                        callId: String,
+                        task: String,
+                        toolName: String
+                    ): ToolResult {
+                        throw CancellationException("cancelled")
+                    }
+                }
+            )
+
+            assertFailsWith<CancellationException> {
+                handler.execute(
+                    GeminiFunctionCall(
+                        id = "call-cancel-search",
+                        name = "search_web",
+                        args = mapOf("query" to "weather")
+                    )
+                )
+            }
+        }
+    }
+
+    @Test
+    fun genericExecuteRethrowsCancellation() {
+        runBlocking {
+            val handler = com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.GenericExecuteHandler(
+                bridge = object : OpenClawBridge() {
+                    override suspend fun delegateTask(
+                        callId: String,
+                        task: String,
+                        toolName: String
+                    ): ToolResult {
+                        throw CancellationException("cancelled")
+                    }
+                }
+            )
+
+            assertFailsWith<CancellationException> {
+                handler.execute(
+                    GeminiFunctionCall(
+                        id = "call-cancel-execute",
+                        name = "execute",
+                        args = mapOf("task" to "Do something")
+                    )
+                )
+            }
+        }
     }
 
     @Test

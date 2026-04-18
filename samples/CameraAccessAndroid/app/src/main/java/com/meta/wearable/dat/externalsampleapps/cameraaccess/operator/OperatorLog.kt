@@ -1,5 +1,6 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.operator
 
+import com.google.gson.Gson
 import timber.log.Timber
 
 data class OperatorContext(
@@ -31,6 +32,7 @@ object OperatorFallbackReason {
 
 object OperatorLog {
     private const val TAG = "OperatorLog"
+    private val gson = Gson()
 
     fun log(
         context: OperatorContext,
@@ -74,30 +76,6 @@ object OperatorLog {
         )
         reason?.let { fields["reason"] = it }
 
-        return fields.entries.joinToString(
-            prefix = "{",
-            postfix = "}"
-        ) { (key, value) ->
-            val renderedValue = when (value) {
-                is Number, is Boolean -> value.toString()
-                else -> "\"${value.toString().escapeJson()}\""
-            }
-            "\"$key\":$renderedValue"
-        }
-    }
-
-    private fun String.escapeJson(): String = buildString(length) {
-        for (char in this@escapeJson) {
-            when (char) {
-                '\\' -> append("\\\\")
-                '"' -> append("\\\"")
-                '\b' -> append("\\b")
-                '\u000C' -> append("\\f")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                '\t' -> append("\\t")
-                else -> append(char)
-            }
-        }
+        return gson.toJson(fields)
     }
 }

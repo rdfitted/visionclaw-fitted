@@ -136,7 +136,7 @@ object ToolDeclarations {
     private fun searchWebJSON(): JSONObject {
         return JSONObject().apply {
             put("name", "search_web")
-            put("description", "The primary tool for fact-finding, research, and general information retrieval. Use this whenever you need to look something up on the web, verify a fact, or gather information about the world.")
+            put("description", "The primary tool for fact-finding, research, and general information retrieval. Use this whenever you need to look something up on the web, verify a fact, or gather information about the world. Use execute only for actions that change the world or require app integrations.")
             put("parameters", JSONObject().apply {
                 put("type", "object")
                 put("properties", JSONObject().apply {
@@ -152,9 +152,6 @@ object ToolDeclarations {
                 put("required", JSONArray().put("query"))
             })
             put("behavior", "BLOCKING")
-            // Invocation Condition hint in description or as a custom field if supported by the parser
-            // Based on instructions: "register search_web declaration with explicit *Invocation Condition*"
-            put("invocation_condition", "Use search_web for all factual queries, news, weather, or information retrieval. Use execute only for actions (sending, saving, controlling).")
         }
     }
 }

@@ -4,6 +4,7 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiFunc
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ToolHandler
+import kotlinx.coroutines.CancellationException
 
 class SearchWebHandler(
     private val bridge: OpenClawBridge
@@ -21,6 +22,8 @@ class SearchWebHandler(
                 task = "search: $query",
                 toolName = call.name
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             ToolResult.Failure(
                 error = e.message ?: "Unknown error in OpenClawBridge",

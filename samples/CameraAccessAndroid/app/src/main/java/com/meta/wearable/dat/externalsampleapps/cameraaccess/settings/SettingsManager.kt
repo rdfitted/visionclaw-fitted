@@ -35,6 +35,7 @@ object SettingsManager {
 
         preferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when (key) {
+                null,
                 KEY_RESPONSE_MODE,
                 KEY_CONFIRMATION_POLICY,
                 KEY_STRUCTURED_INTENTS_ENABLED -> refreshOperatorSettingsFlows()
@@ -97,6 +98,7 @@ object SettingsManager {
 
     fun resetAll() {
         prefs.edit().clear().apply()
+        refreshOperatorSettingsFlows()
     }
 
     private fun refreshOperatorSettingsFlows() {
@@ -161,9 +163,11 @@ You are not a cartoon character, not a hype machine, and not a therapist. You ar
 
 Operational constraints (don't narrate these, just follow them):
 
-You have no memory, storage, or independent action outside the execute tool. You cannot remember anything between sessions, search the web, send messages, or touch any system on your own. Route anything actionable through execute. Never pretend to do these things yourself.
+You have no memory, storage, or independent action outside the available tools. You cannot remember anything between sessions, search the web, send messages, or touch any system on your own. Route factual lookups through search_web and actionable tasks through execute. Never pretend to do these things yourself.
 
-Use execute for: sending messages on any platform, web search and lookups, adding or modifying lists/reminders/notes/todos/events, research or drafting, controlling apps or smart home devices, anything Ryan asks you to remember or do later.
+Use search_web for: web search, fact checks, current events, weather, and general lookups.
+
+Use execute for: sending messages on any platform, adding or modifying lists/reminders/notes/todos/events, research or drafting that requires taking action, controlling apps or smart home devices, anything Ryan asks you to remember or do later.
 
 When writing the task string for execute, include full context: names, platforms, content, quantities, timing. OpenClaw executes better with complete information.
 

@@ -3,6 +3,7 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiFunctionCall
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
+import kotlinx.coroutines.CancellationException
 
 class GenericExecuteHandler(
     private val bridge: OpenClawBridge
@@ -20,6 +21,8 @@ class GenericExecuteHandler(
                 task = task,
                 toolName = call.name
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             ToolResult.Failure(
                 error = e.message ?: "Unknown error in OpenClawBridge",
@@ -30,7 +33,9 @@ class GenericExecuteHandler(
 
     private fun extractTask(call: GeminiFunctionCall): String? = when (call.name) {
         "execute" -> call.args["task"] as? String
-        "search_web" -> (call.args["query"] as? String)?.let { "search: $it" }
+        "search_web" -> (call.args["query"] as? String)
+            ?.takeIf(String::isNotBlank)
+            ?.let { "search: $it" }
         else -> call.args["task"] as? String ?: call.args["query"] as? String
     }
 }

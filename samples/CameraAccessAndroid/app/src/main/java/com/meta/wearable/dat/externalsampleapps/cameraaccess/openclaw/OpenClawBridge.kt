@@ -23,7 +23,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
-class OpenClawBridge {
+open class OpenClawBridge {
     companion object {
         private const val TAG = "OpenClawBridge"
         private const val MAX_HISTORY_TURNS = 10
@@ -102,7 +102,7 @@ class OpenClawBridge {
         flowScope.cancel()
     }
 
-    suspend fun delegateTask(
+    open suspend fun delegateTask(
         callId: ToolCallId,
         task: String,
         toolName: String = "execute"

@@ -79,6 +79,7 @@ dependencies {
   implementation(libs.timber)
   testImplementation(kotlin("test"))
   testImplementation("junit:junit:4.13.2")
+  testImplementation("org.json:json:20240303")
   androidTestImplementation(libs.androidx.ui.test.junit4)
   androidTestImplementation(libs.androidx.test.uiautomator)
   androidTestImplementation(libs.androidx.test.rules)

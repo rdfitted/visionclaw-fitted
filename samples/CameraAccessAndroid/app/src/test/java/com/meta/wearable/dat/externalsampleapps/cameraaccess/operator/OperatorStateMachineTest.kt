@@ -20,6 +20,9 @@ class OperatorStateMachineTest {
         state = OperatorStateMachine.awaitConfirmation(state, "call-1", "Outbound message")
         assertIs<OperatorStateMachine.OperatorState.AwaitingConfirmation>(state.calls.getValue("call-1"))
 
+        state = OperatorStateMachine.confirm(state, "call-1")
+        assertIs<OperatorStateMachine.OperatorState.Validated>(state.calls.getValue("call-1"))
+
         state = OperatorStateMachine.dispatch(state, "call-1")
         assertIs<OperatorStateMachine.OperatorState.Dispatched>(state.calls.getValue("call-1"))
 
@@ -43,6 +46,19 @@ class OperatorStateMachineTest {
 
         state = OperatorStateMachine.dispatch(state, "call-confirm")
         assertIs<OperatorStateMachine.OperatorState.Dispatched>(state.calls.getValue("call-confirm"))
+    }
+
+    @Test
+    fun awaitingConfirmationCannotDispatchUntilConfirmed() {
+        var state = OperatorStateMachine.State()
+
+        state = OperatorStateMachine.propose(state, context("call-awaiting"), "execute", "Send update")
+        state = OperatorStateMachine.validate(state, "call-awaiting")
+        state = OperatorStateMachine.awaitConfirmation(state, "call-awaiting", "Needs confirmation")
+
+        state = OperatorStateMachine.dispatch(state, "call-awaiting")
+
+        assertIs<OperatorStateMachine.OperatorState.AwaitingConfirmation>(state.calls.getValue("call-awaiting"))
     }
 
     @Test
@@ -103,6 +119,21 @@ class OperatorStateMachineTest {
 
         val invalidated = assertIs<OperatorStateMachine.OperatorState.Invalidated>(state.calls.getValue("call-1"))
         assertEquals("Missing task payload", invalidated.reason)
+    }
+
+    @Test
+    fun invalidateNewCreatesInvalidatedStateWithoutProposal() {
+        var state = OperatorStateMachine.State()
+
+        state = OperatorStateMachine.invalidateNew(
+            state = state,
+            context = context("call-new-invalid"),
+            toolName = "search_web",
+            reason = "missing_task_payload"
+        )
+
+        val invalidated = assertIs<OperatorStateMachine.OperatorState.Invalidated>(state.calls.getValue("call-new-invalid"))
+        assertEquals("missing_task_payload", invalidated.reason)
     }
 
     @Test
