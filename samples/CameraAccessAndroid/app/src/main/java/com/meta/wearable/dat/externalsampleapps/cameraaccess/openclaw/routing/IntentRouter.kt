@@ -26,7 +26,7 @@ class IntentRouter(
     private val toolRegistry: ToolRegistry = ToolRegistry(bridge)
 ) {
     fun resolve(call: GeminiFunctionCall): IntentDispatchPlan {
-        if (!structuredIntentsEnabledProvider()) {
+        if (call.name != "confirm_pending" && !structuredIntentsEnabledProvider()) {
             return plan(
                 call = call,
                 handler = genericHandler,

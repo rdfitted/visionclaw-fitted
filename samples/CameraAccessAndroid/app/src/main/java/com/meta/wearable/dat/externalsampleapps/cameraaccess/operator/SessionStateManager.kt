@@ -19,7 +19,7 @@ enum class EntityKind {
 }
 
 data class PendingConfirmation(
-    val toolCallId: ToolCallId,
+    val id: ToolCallId,
     val toolName: String,
     val task: String,
     val reason: String,
@@ -148,7 +148,7 @@ class SessionStateManager(
     ) {
         val nowMs = nowProvider()
         _pendingConfirmation.value = PendingConfirmation(
-            toolCallId = toolCallId,
+            id = toolCallId,
             toolName = toolName,
             task = sanitizeText(task).orEmpty(),
             reason = sanitizeText(reason).orEmpty(),
