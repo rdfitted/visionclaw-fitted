@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.PendingConfirmation
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawEventClient
@@ -29,6 +30,7 @@ data class GeminiUiState(
     val userTranscript: String = "",
     val aiTranscript: String = "",
     val toolCallStatus: ToolCallStatus = ToolCallStatus.Idle,
+    val pendingConfirmation: PendingConfirmation? = null,
     val openClawConnectionState: OpenClawConnectionState = OpenClawConnectionState.NotConfigured,
 )
 
@@ -146,17 +148,18 @@ class GeminiSessionViewModel : ViewModel() {
             stateObservationJob = viewModelScope.launch {
                 launch {
                     combine(
-                        openClawBridge.conversationHistory,
-                        router.operatorState,
+                        openClawBridge.lastToolCallStatus,
+                        openClawBridge.connectionState,
                         sessionStateManager.pendingConfirmation
-                    ) { _, _, _ ->
-                        openClawBridge.lastToolCallStatus.value to openClawBridge.connectionState.value
-                    }.collect { (toolCallStatus, openClawConnectionState) ->
+                    ) { toolCallStatus, openClawConnectionState, pendingConfirmation ->
+                        Triple(toolCallStatus, openClawConnectionState, pendingConfirmation)
+                    }.collect { (toolCallStatus, openClawConnectionState, pendingConfirmation) ->
                         _uiState.update { current ->
                             current.copy(
                                 connectionState = geminiService.connectionState.value,
                                 isModelSpeaking = geminiService.isModelSpeaking.value,
                                 toolCallStatus = toolCallStatus,
+                                pendingConfirmation = pendingConfirmation,
                                 openClawConnectionState = openClawConnectionState,
                             )
                         }
@@ -236,6 +239,18 @@ class GeminiSessionViewModel : ViewModel() {
         sessionStateManager.setToolCallRouter(null)
         toolCallRouter = null
         _uiState.value = GeminiUiState()
+    }
+
+    fun confirmPendingAction(pendingActionId: String) {
+        viewModelScope.launch {
+            toolCallRouter?.confirmPendingAction(pendingActionId)
+        }
+    }
+
+    fun cancelPendingAction(pendingActionId: String) {
+        viewModelScope.launch {
+            toolCallRouter?.cancelPendingAction(pendingActionId, "user_declined")
+        }
     }
 
     fun sendVideoFrameIfThrottled(bitmap: Bitmap) {

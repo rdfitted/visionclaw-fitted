@@ -318,6 +318,17 @@ class ToolCallRouter(
         }
     }
 
+    suspend fun confirmPendingAction(pendingActionId: String): ToolResult {
+        return pendingConfirmationController.confirmPending(pendingActionId)
+    }
+
+    suspend fun cancelPendingAction(
+        pendingActionId: String,
+        reason: String = "user_declined"
+    ): ToolResult {
+        return pendingConfirmationController.cancelPending(pendingActionId, reason)
+    }
+
     fun invalidatePendingConfirmations(reason: String) {
         val invalidated = synchronized(stateLock) {
             invalidatePendingActionLocked(reason)
