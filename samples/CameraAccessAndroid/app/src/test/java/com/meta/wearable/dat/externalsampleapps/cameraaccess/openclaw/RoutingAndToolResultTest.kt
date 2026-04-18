@@ -3,6 +3,7 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ToolHandler
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ToolRegistry
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import kotlinx.coroutines.CoroutineScope
 import kotlin.test.assertFailsWith
 import kotlin.test.Test
@@ -150,8 +151,10 @@ class RoutingAndToolResultTest {
     @Test
     fun intentRouterEmitsHandlerUnavailableFallbackReason() = runBlocking {
         val bridge = OpenClawBridge()
+        val sessionStateManager = SessionStateManager(bridge)
         val router = IntentRouter(
             bridge = bridge,
+            sessionStateManager = sessionStateManager,
             structuredIntentsEnabledProvider = { true },
             genericHandler = object : ToolHandler {
                 override suspend fun execute(call: GeminiFunctionCall): ToolResult {
@@ -180,11 +183,14 @@ class RoutingAndToolResultTest {
     @Test
     fun toolCallRouterMarksThrownRouteAsFailedAndDoesNotLeaveCancelableJob() {
         val bridge = OpenClawBridge()
+        val sessionStateManager = SessionStateManager(bridge)
         val router = ToolCallRouter(
             bridge = bridge,
             scope = CoroutineScope(Job() + Dispatchers.Unconfined),
-            intentRouter = IntentRouter(
+            sessionStateManager = sessionStateManager,
+            intentRouterOverride = IntentRouter(
                 bridge = bridge,
+                sessionStateManager = sessionStateManager,
                 structuredIntentsEnabledProvider = { true },
                 toolRegistry = ToolRegistry(bridge).apply {
                     register(

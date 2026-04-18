@@ -1,16 +1,18 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.operator
 
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class SessionStateManagerTest {
     @Test
     fun sessionContextBlockRespectsPriorityAndBudget() {
         val clock = TestClock()
-        val manager = SessionStateManager(nowProvider = clock::now)
+        val manager = SessionStateManager(TestBridge(), nowProvider = clock::now)
 
         manager.reset("session-1")
         manager.updateObjective("Send a detailed status update to Samantha Carter about the VisionClaw rollout in Honolulu and include the revised deadline.")
@@ -36,7 +38,7 @@ class SessionStateManagerTest {
     @Test
     fun recentEntitiesPruneAfterTenMinutesOfInactivity() {
         val clock = TestClock()
-        val manager = SessionStateManager(nowProvider = clock::now)
+        val manager = SessionStateManager(TestBridge(), nowProvider = clock::now)
 
         manager.reset("session-1")
         manager.observeText("Reach Alice Johnson at alice@example.com")
@@ -50,7 +52,7 @@ class SessionStateManagerTest {
 
     @Test
     fun invalidatePendingConfirmationsClearsFlow() {
-        val manager = SessionStateManager()
+        val manager = SessionStateManager(TestBridge())
 
         manager.reset("session-1")
         manager.setPendingConfirmation(
@@ -67,7 +69,7 @@ class SessionStateManagerTest {
 
     @Test
     fun resetWipesObjectiveEntitiesPendingAndToolResults() {
-        val manager = SessionStateManager()
+        val manager = SessionStateManager(TestBridge())
 
         manager.reset("session-1")
         manager.updateObjective("Email Marcus about the budget")
@@ -83,6 +85,14 @@ class SessionStateManagerTest {
         assertTrue(manager.recentToolResults.value.isEmpty())
     }
 
+    @Test
+    fun conversationHistoryPassthroughUsesBridgeFlow() {
+        val bridge = OpenClawBridge()
+        val manager = SessionStateManager(bridge)
+
+        assertSame(bridge.conversationHistory, manager.conversationHistory)
+    }
+
     private class TestClock {
         private var nowMs: Long = 1_000L
 
@@ -90,6 +100,11 @@ class SessionStateManagerTest {
 
         fun advanceBy(deltaMs: Long) {
             nowMs += deltaMs
+        }
+    }
+
+    private class TestBridge : OpenClawBridge() {
+        override fun resetSession() {
         }
     }
 }
