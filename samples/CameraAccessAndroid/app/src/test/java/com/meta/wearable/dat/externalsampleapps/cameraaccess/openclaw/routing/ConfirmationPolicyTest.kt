@@ -10,6 +10,7 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionSta
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.ConfirmationPolicy as OperatorConfirmationPolicy
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -19,6 +20,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 
 class ConfirmationPolicyTest {
+    @BeforeTest
+    fun initializeConfirmationPolicy() {
+        setConfirmationPolicy(OperatorConfirmationPolicy.Standard)
+    }
+
     @AfterTest
     fun resetConfirmationPolicy() {
         setConfirmationPolicy(OperatorConfirmationPolicy.Standard)
