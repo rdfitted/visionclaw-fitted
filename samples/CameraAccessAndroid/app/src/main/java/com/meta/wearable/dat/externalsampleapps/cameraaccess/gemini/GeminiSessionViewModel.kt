@@ -68,7 +68,7 @@ class GeminiSessionViewModel : ViewModel() {
     }
     private val sessionContextRefreshTracker = SessionContextRefreshTracker(sessionStateManager, geminiService)
     private val audioManager = AudioManager()
-    private val eventClient = OpenClawEventClient()
+    private val eventClient by lazy { OpenClawEventClient() }
     private val queuedCronNotifications = ArrayDeque<OpenClawNotification>()
     private var lastVideoFrameTime: Long = 0
     private var stateObservationJob: Job? = null
@@ -189,43 +189,12 @@ class GeminiSessionViewModel : ViewModel() {
                         effectiveResponseMode = _effectiveResponseMode.value
                     )
                 }.collect { observedState ->
-                    val hadPendingConfirmation = previousPendingConfirmationId != null
-                    val hasPendingConfirmation = observedState.pendingConfirmation != null
-                    previousPendingConfirmationId = observedState.pendingConfirmation?.id
-
-                    _uiState.update { current ->
-                        current.copy(
-                            connectionState = observedState.connectionState,
-                            isModelSpeaking = observedState.isModelSpeaking,
-                            toolCallStatus = observedState.toolCallStatus,
-                            pendingConfirmation = observedState.pendingConfirmation,
-                            openClawConnectionState = observedState.openClawConnectionState,
-                            effectiveResponseMode = observedState.effectiveResponseMode,
-                        )
-                    }
-
-                    if (hadPendingConfirmation && !hasPendingConfirmation) {
-                        flushQueuedCronNotifications()
-                    }
+                    applyObservedState(observedState)
                 }
             }
 
             if (SettingsManager.proactiveNotificationsEnabled) {
-                eventClient.onNotification = notification@{ notification ->
-                    val state = _uiState.value
-                    if (!state.isGeminiActive || state.connectionState != GeminiConnectionState.Ready) {
-                        return@notification
-                    }
-
-                    if (sessionStateManager.pendingConfirmation.value != null) {
-                        when (notification.kind) {
-                            OpenClawNotificationKind.HEARTBEAT -> Unit
-                            OpenClawNotificationKind.CRON -> enqueueCronNotification(notification)
-                        }
-                    } else {
-                        geminiService.sendTextMessage(notification.text)
-                    }
-                }
+                eventClient.onNotification = ::handleProactiveNotification
             }
 
             connectGemini(startAuxiliaryServices = true)
@@ -284,6 +253,44 @@ class GeminiSessionViewModel : ViewModel() {
             queuedCronNotifications.removeFirst()
         }
         queuedCronNotifications.addLast(notification)
+    }
+
+    private fun handleProactiveNotification(notification: OpenClawNotification) {
+        val state = _uiState.value
+        if (!state.isGeminiActive || state.connectionState != GeminiConnectionState.Ready) {
+            return
+        }
+
+        if (sessionStateManager.pendingConfirmation.value != null) {
+            when (notification.kind) {
+                OpenClawNotificationKind.HEARTBEAT -> Unit
+                OpenClawNotificationKind.CRON -> enqueueCronNotification(notification)
+            }
+            return
+        }
+
+        geminiService.sendTextMessage(notification.text)
+    }
+
+    private fun applyObservedState(observedState: GeminiUiState) {
+        val hadPendingConfirmation = previousPendingConfirmationId != null
+        val hasPendingConfirmation = observedState.pendingConfirmation != null
+        previousPendingConfirmationId = observedState.pendingConfirmation?.id
+
+        _uiState.update { current ->
+            current.copy(
+                connectionState = observedState.connectionState,
+                isModelSpeaking = observedState.isModelSpeaking,
+                toolCallStatus = observedState.toolCallStatus,
+                pendingConfirmation = observedState.pendingConfirmation,
+                openClawConnectionState = observedState.openClawConnectionState,
+                effectiveResponseMode = observedState.effectiveResponseMode,
+            )
+        }
+
+        if (hadPendingConfirmation && !hasPendingConfirmation) {
+            flushQueuedCronNotifications()
+        }
     }
 
     private fun flushQueuedCronNotifications() {
