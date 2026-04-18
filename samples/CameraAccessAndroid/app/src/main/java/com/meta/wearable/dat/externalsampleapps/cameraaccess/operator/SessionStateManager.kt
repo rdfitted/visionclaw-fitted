@@ -53,17 +53,19 @@ class SessionStateManager(
 ) {
     companion object {
         private const val ENTITY_INACTIVITY_WINDOW_MS = 10 * 60 * 1000L
-        private const val MAX_CONTEXT_CHARS = 800
+        private const val MAX_CONTEXT_TOKENS = 200
         private const val MAX_ENTITY_ITEMS = 6
         private const val MAX_TOOL_RESULT_ITEMS = 4
         private const val MAX_OBJECTIVE_LENGTH = 220
         private const val MAX_PENDING_LENGTH = 220
         private const val MAX_ENTITY_SECTION_LENGTH = 200
         private const val MAX_TOOL_SECTION_LENGTH = 220
+        private const val ELLIPSIS = "..."
 
         private val emailRegex = Regex("""\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b""")
         private val phoneRegex = Regex("""\b(?:\+?\d[\d(). -]{6,}\d)\b""")
         private val properNounRegex = Regex("""\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b""")
+        private val tokenRegex = Regex("""[A-Za-z0-9]+|[^\sA-Za-z0-9]""")
         private val properNounStopWords = setOf(
             "A",
             "An",
@@ -90,6 +92,8 @@ class SessionStateManager(
             "We",
             "You"
         )
+
+        internal fun estimateTokens(text: String): Int = tokenRegex.findAll(text).count()
     }
 
     private var currentSessionKey: String? = null
@@ -224,25 +228,29 @@ class SessionStateManager(
         }
 
         val builder = StringBuilder("Session context:")
+        var currentTokens = estimateTokens(builder.toString())
         for (section in sections) {
-            val separator = "\n"
-            val remaining = MAX_CONTEXT_CHARS - builder.length - separator.length
-            if (remaining <= 0) {
+            val sectionTokens = estimateTokens(section)
+            if (currentTokens + sectionTokens <= MAX_CONTEXT_TOKENS) {
+                builder.append('\n')
+                builder.append(section)
+                currentTokens += sectionTokens
+                continue
+            }
+
+            val remainingTokens = MAX_CONTEXT_TOKENS - currentTokens
+            if (remainingTokens <= 0) {
                 break
             }
 
-            builder.append(separator)
-            builder.append(
-                if (section.length <= remaining) {
-                    section
-                } else {
-                    truncate(section, remaining)
-                }
-            )
-
-            if (builder.length >= MAX_CONTEXT_CHARS) {
+            val truncatedSection = truncateToTokenBudget(section, remainingTokens)
+            if (truncatedSection.isBlank()) {
                 break
             }
+
+            builder.append('\n')
+            builder.append(truncatedSection)
+            break
         }
 
         return builder.toString()
@@ -353,7 +361,42 @@ class SessionStateManager(
         if (maxLength <= 3) {
             return text.take(maxLength)
         }
-        return text.take(maxLength - 3).trimEnd() + "..."
+        return text.take(maxLength - 3).trimEnd() + ELLIPSIS
+    }
+
+    private fun truncateToTokenBudget(text: String, maxTokens: Int): String {
+        if (maxTokens <= 0) {
+            return ""
+        }
+        if (estimateTokens(text) <= maxTokens) {
+            return text
+        }
+
+        val ellipsisTokens = estimateTokens(ELLIPSIS)
+        return if (maxTokens > ellipsisTokens) {
+            binarySearchTruncation(text, maxTokens, ELLIPSIS)
+        } else {
+            binarySearchTruncation(text, maxTokens, "")
+        }
+    }
+
+    private fun binarySearchTruncation(text: String, maxTokens: Int, suffix: String): String {
+        var low = 0
+        var high = text.length
+        var best = ""
+
+        while (low <= high) {
+            val mid = (low + high) / 2
+            val candidate = text.take(mid).trimEnd() + suffix
+            if (estimateTokens(candidate) <= maxTokens) {
+                best = candidate
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+
+        return best
     }
 
     private fun EntityKind.label(): String = when (this) {

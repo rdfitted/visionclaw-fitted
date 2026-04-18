@@ -33,7 +33,7 @@ class SessionStateManagerTest {
         assertTrue(block.contains("Pending confirmation:"))
         assertTrue(block.contains("Recent entities:"))
         assertTrue(block.contains("Recent tool results:"))
-        assertTrue(block.length <= 800)
+        assertTrue(SessionStateManager.estimateTokens(block) <= 200)
     }
 
     @Test
