@@ -16,7 +16,7 @@ object SettingsManager {
     private lateinit var prefs: SharedPreferences
     private var preferenceChangeListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
-    private val _responseMode = MutableStateFlow(ResponseMode.NATURAL)
+    private val _responseMode = MutableStateFlow(ResponseMode.NORMAL)
     val responseModeFlow: StateFlow<ResponseMode> = _responseMode.asStateFlow()
 
     private val _confirmationPolicy = MutableStateFlow(ConfirmationPolicy.Standard)

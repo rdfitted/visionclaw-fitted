@@ -14,6 +14,7 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawNo
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawNotificationKind
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallStatus
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallRouter
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.ResponseMode
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.stream.StreamingMode
 import java.util.ArrayDeque
@@ -36,6 +37,7 @@ data class GeminiUiState(
     val toolCallStatus: ToolCallStatus = ToolCallStatus.Idle,
     val pendingConfirmation: PendingConfirmation? = null,
     val openClawConnectionState: OpenClawConnectionState = OpenClawConnectionState.NotConfigured,
+    val effectiveResponseMode: ResponseMode = ResponseMode.NORMAL,
 )
 
 class GeminiSessionViewModel : ViewModel() {
@@ -49,6 +51,9 @@ class GeminiSessionViewModel : ViewModel() {
 
     private val openClawBridge = OpenClawBridge()
     private val sessionStateManager = SessionStateManager(openClawBridge)
+    private val _streamingMode = MutableStateFlow(StreamingMode.GLASSES)
+    private val _effectiveResponseMode = MutableStateFlow(SettingsManager.responseModeFlow.value)
+    val effectiveResponseMode: StateFlow<ResponseMode> = _effectiveResponseMode.asStateFlow()
     private val geminiService = object : GeminiLiveService() {
         override fun buildSystemInstruction(): String {
             val sessionContext = this@GeminiSessionViewModel.sessionStateManager.sessionContextBlock()
@@ -58,6 +63,10 @@ class GeminiSessionViewModel : ViewModel() {
                 baseInstruction.isBlank() -> sessionContext
                 else -> "$baseInstruction\n\n$sessionContext"
             }
+        }
+
+        override fun triggerReconnectAfterModeChange(reason: String) {
+            this@GeminiSessionViewModel.connectGemini(startAuxiliaryServices = false)
         }
     }.apply {
         this.sessionStateManager = this@GeminiSessionViewModel.sessionStateManager
@@ -71,7 +80,15 @@ class GeminiSessionViewModel : ViewModel() {
     private var toolCallRouter: ToolCallRouter? = null
     private var previousPendingConfirmationId: String? = null
 
-    var streamingMode: StreamingMode = StreamingMode.GLASSES
+    var streamingMode: StreamingMode
+        get() = _streamingMode.value
+        set(value) {
+            _streamingMode.value = value
+        }
+
+    init {
+        observeEffectiveResponseMode()
+    }
 
     fun startSession() {
         if (_uiState.value.isGeminiActive) return
@@ -87,7 +104,10 @@ class GeminiSessionViewModel : ViewModel() {
         sessionContextRefreshTracker.markCurrentContextSent()
         queuedCronNotifications.clear()
         previousPendingConfirmationId = null
-        _uiState.value = _uiState.value.copy(isGeminiActive = true)
+        _uiState.value = _uiState.value.copy(
+            isGeminiActive = true,
+            effectiveResponseMode = effectiveResponseMode.value
+        )
 
         // Wire audio callbacks
         audioManager.onAudioCaptured = lambda@{ data ->
@@ -170,7 +190,8 @@ class GeminiSessionViewModel : ViewModel() {
                         isModelSpeaking = isModelSpeaking,
                         toolCallStatus = toolCallStatus,
                         pendingConfirmation = pendingConfirmation,
-                        openClawConnectionState = openClawConnectionState
+                        openClawConnectionState = openClawConnectionState,
+                        effectiveResponseMode = _effectiveResponseMode.value
                     )
                 }.collect { observedState ->
                     val hadPendingConfirmation = previousPendingConfirmationId != null
@@ -184,6 +205,7 @@ class GeminiSessionViewModel : ViewModel() {
                             toolCallStatus = observedState.toolCallStatus,
                             pendingConfirmation = observedState.pendingConfirmation,
                             openClawConnectionState = observedState.openClawConnectionState,
+                            effectiveResponseMode = observedState.effectiveResponseMode,
                         )
                     }
 
@@ -193,48 +215,25 @@ class GeminiSessionViewModel : ViewModel() {
                 }
             }
 
-            // Connect to Gemini
-            geminiService.connect { setupOk ->
-                if (!setupOk) {
-                    val msg = when (val state = geminiService.connectionState.value) {
-                        is GeminiConnectionState.Error -> state.message
-                        else -> "Failed to connect to Gemini"
+            if (SettingsManager.proactiveNotificationsEnabled) {
+                eventClient.onNotification = notification@{ notification ->
+                    val state = _uiState.value
+                    if (!state.isGeminiActive || state.connectionState != GeminiConnectionState.Ready) {
+                        return@notification
                     }
-                    stopSession()
-                    _uiState.value = _uiState.value.copy(errorMessage = msg)
-                    return@connect
-                }
 
-                // Start mic capture
-                try {
-                    audioManager.startCapture()
-                } catch (e: Exception) {
-                    stopSession()
-                    _uiState.value = _uiState.value.copy(
-                        errorMessage = "Mic capture failed: ${e.message}"
-                    )
-                }
-
-                // Connect to OpenClaw event stream for proactive notifications
-                if (SettingsManager.proactiveNotificationsEnabled) {
-                    eventClient.onNotification = notification@{ notification ->
-                        val state = _uiState.value
-                        if (!state.isGeminiActive || state.connectionState != GeminiConnectionState.Ready) {
-                            return@notification
+                    if (sessionStateManager.pendingConfirmation.value != null) {
+                        when (notification.kind) {
+                            OpenClawNotificationKind.HEARTBEAT -> Unit
+                            OpenClawNotificationKind.CRON -> enqueueCronNotification(notification)
                         }
-
-                        if (sessionStateManager.pendingConfirmation.value != null) {
-                            when (notification.kind) {
-                                OpenClawNotificationKind.HEARTBEAT -> Unit
-                                OpenClawNotificationKind.CRON -> enqueueCronNotification(notification)
-                            }
-                        } else {
-                            geminiService.sendTextMessage(notification.text)
-                        }
+                    } else {
+                        geminiService.sendTextMessage(notification.text)
                     }
-                    eventClient.connect()
                 }
             }
+
+            connectGemini(startAuxiliaryServices = true)
         }
     }
 
@@ -307,4 +306,86 @@ class GeminiSessionViewModel : ViewModel() {
             }
         }
     }
+
+    private fun connectGemini(startAuxiliaryServices: Boolean) {
+        geminiService.connect { setupOk ->
+            if (!setupOk) {
+                val msg = when (val state = geminiService.connectionState.value) {
+                    is GeminiConnectionState.Error -> state.message
+                    else -> "Failed to connect to Gemini"
+                }
+                stopSession()
+                _uiState.value = _uiState.value.copy(errorMessage = msg)
+                return@connect
+            }
+
+            if (!startAuxiliaryServices) {
+                return@connect
+            }
+
+            try {
+                audioManager.startCapture()
+            } catch (e: Exception) {
+                stopSession()
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "Mic capture failed: ${e.message}"
+                )
+                return@connect
+            }
+
+            if (SettingsManager.proactiveNotificationsEnabled) {
+                eventClient.connect()
+            }
+        }
+    }
+
+    private fun observeEffectiveResponseMode() {
+        viewModelScope.launch {
+            combine(
+                SettingsManager.responseModeFlow,
+                _streamingMode,
+                sessionStateManager.pendingConfirmation
+            ) { storedMode, streamingMode, pendingConfirmation ->
+                deriveEffectiveResponseMode(
+                    storedMode = storedMode,
+                    streamingMode = streamingMode,
+                    pendingConfirmation = pendingConfirmation
+                )
+            }.collect { mode ->
+                val previousMode = _effectiveResponseMode.value
+                _effectiveResponseMode.value = mode
+                _uiState.update { current ->
+                    current.copy(effectiveResponseMode = mode)
+                }
+
+                if (
+                    previousMode != mode &&
+                    _uiState.value.isGeminiActive &&
+                    geminiService.connectionState.value == GeminiConnectionState.Ready
+                ) {
+                    geminiService.restartForModeChange("response_mode_${mode.storageValue}")
+                }
+            }
+        }
+    }
+
+    private fun deriveEffectiveResponseMode(
+        storedMode: ResponseMode,
+        streamingMode: StreamingMode,
+        pendingConfirmation: PendingConfirmation?
+    ): ResponseMode {
+        var mode = storedMode
+
+        if (streamingMode == StreamingMode.GLASSES) {
+            mode = mode.tighten()
+        }
+
+        if (pendingConfirmation != null) {
+            mode = mode.tighten()
+        }
+
+        // TODO: Tighten once reconnect retry count is exposed as a stable flow.
+        return mode
+    }
+
 }
