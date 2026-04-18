@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawEventClient
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawConnectionState
@@ -38,8 +39,19 @@ class GeminiSessionViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(GeminiUiState())
     val uiState: StateFlow<GeminiUiState> = _uiState.asStateFlow()
 
-    private val geminiService = GeminiLiveService()
     private val openClawBridge = OpenClawBridge()
+    private val sessionStateManager = SessionStateManager()
+    private val geminiService = object : GeminiLiveService() {
+        override fun buildSystemInstruction(): String {
+            val sessionContext = sessionStateManager.sessionContextBlock()
+            val baseInstruction = GeminiConfig.systemInstruction.trim()
+            return when {
+                sessionContext.isBlank() -> baseInstruction
+                baseInstruction.isBlank() -> sessionContext
+                else -> "$baseInstruction\n\n$sessionContext"
+            }
+        }
+    }
     private val audioManager = AudioManager()
     private val eventClient = OpenClawEventClient()
     private var lastVideoFrameTime: Long = 0
@@ -58,6 +70,7 @@ class GeminiSessionViewModel : ViewModel() {
             return
         }
 
+        sessionStateManager.reset(openClawBridge.operatorSessionId)
         _uiState.value = _uiState.value.copy(isGeminiActive = true)
 
         // Wire audio callbacks
@@ -76,6 +89,7 @@ class GeminiSessionViewModel : ViewModel() {
         }
 
         geminiService.onTurnComplete = {
+            sessionStateManager.updateObjective(_uiState.value.userTranscript)
             _uiState.value = _uiState.value.copy(userTranscript = "")
         }
 
@@ -105,7 +119,11 @@ class GeminiSessionViewModel : ViewModel() {
         viewModelScope.launch {
             openClawBridge.checkConnection()
             openClawBridge.resetSession()
-            toolCallRouter = ToolCallRouter(openClawBridge, viewModelScope)
+            toolCallRouter = ToolCallRouter(
+                bridge = openClawBridge,
+                scope = viewModelScope,
+                sessionStateManager = sessionStateManager
+            )
 
             geminiService.onToolCall = { toolCall ->
                 viewModelScope.launch {
@@ -188,6 +206,7 @@ class GeminiSessionViewModel : ViewModel() {
         geminiService.disconnect()
         stateObservationJob?.cancel()
         stateObservationJob = null
+        sessionStateManager.reset(openClawBridge.operatorSessionId)
         _uiState.value = GeminiUiState()
     }
 

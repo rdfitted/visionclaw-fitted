@@ -2,6 +2,7 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw
 
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorContext
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorStateMachine
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -15,6 +16,7 @@ import org.json.JSONObject
 class ToolCallRouter(
     private val bridge: OpenClawBridge,
     private val scope: CoroutineScope,
+    private val sessionStateManager: SessionStateManager? = null,
     private val intentRouter: IntentRouter = IntentRouter(bridge)
 ) {
     private val stateLock = Any()
@@ -29,6 +31,7 @@ class ToolCallRouter(
         val callId = call.id
         val callName = call.name
         val taskDesc = extractTaskDesc(call)
+        sessionStateManager?.observeText(taskDesc)
         val context = OperatorContext(
             sessionId = bridge.operatorSessionId,
             turnId = "turn-${turnCounter.incrementAndGet()}",
@@ -45,6 +48,10 @@ class ToolCallRouter(
                 )
             }
             bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, "Missing task payload"))
+            sessionStateManager?.recordToolResult(
+                toolName = callName,
+                result = ToolResult.Failure("Missing task payload")
+            )
             sendResponse(
                 buildToolResponse(
                     callId,
@@ -87,6 +94,7 @@ class ToolCallRouter(
 
         if (circuitBreakerFailure != null) {
             bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, "Circuit breaker open"))
+            sessionStateManager?.recordToolResult(callName, circuitBreakerFailure)
             sendResponse(buildToolResponse(callId, callName, circuitBreakerFailure))
             return
         }
@@ -121,17 +129,20 @@ class ToolCallRouter(
                         }
                     }
 
+                    sessionStateManager?.recordToolResult(callName, result)
                     response = buildToolResponse(callId, callName, result)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 val error = e.message ?: "Unhandled routing failure"
+                val failure = ToolResult.Failure(error)
                 synchronized(stateLock) {
                     operatorState = OperatorStateMachine.fail(operatorState, callId, error)
                 }
                 bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, error))
-                response = buildToolResponse(callId, callName, ToolResult.Failure(error))
+                sessionStateManager?.recordToolResult(callName, failure)
+                response = buildToolResponse(callId, callName, failure)
             } finally {
                 synchronized(stateLock) {
                     inFlightJobs.remove(callId)

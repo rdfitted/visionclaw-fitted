@@ -31,7 +31,7 @@ sealed class GeminiConnectionState {
     data class Error(val message: String) : GeminiConnectionState()
 }
 
-class GeminiLiveService {
+open class GeminiLiveService {
     companion object {
         private const val TAG = "GeminiLiveService"
     }
@@ -222,7 +222,7 @@ class GeminiLiveService {
                 })
                 put("systemInstruction", JSONObject().apply {
                     put("parts", JSONArray().put(JSONObject().apply {
-                        put("text", GeminiConfig.systemInstruction)
+                        put("text", buildSystemInstruction())
                     }))
                 })
                 put("tools", JSONArray().put(JSONObject().apply {
@@ -250,6 +250,10 @@ class GeminiLiveService {
         }
         // Send directly (not via sendExecutor) to ensure it's the first message
         webSocket?.send(setup.toString())
+    }
+
+    internal open fun buildSystemInstruction(): String {
+        return GeminiConfig.systemInstruction
     }
 
     private fun handleMessage(text: String) {
