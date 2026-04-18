@@ -4,6 +4,7 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorCo
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorStateMachine
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -91,42 +92,53 @@ class ToolCallRouter(
         }
 
         val job = scope.launch(start = CoroutineStart.LAZY) {
-            val routingResult = intentRouter.route(call)
-            val result = routingResult.result
+            var response: JSONObject? = null
+            try {
+                val routingResult = intentRouter.route(call)
+                val result = routingResult.result
 
-            if (!coroutineContext[Job]!!.isCancelled) {
-                synchronized(stateLock) {
-                    routingResult.fallbackReason?.let { reason ->
-                        operatorState = OperatorStateMachine.fallback(
-                            state = operatorState,
-                            id = callId,
-                            reason = reason
-                        )
-                    }
-
-                    when (result) {
-                        is ToolResult.Success -> {
-                            operatorState = OperatorStateMachine.complete(operatorState, callId, result.result)
-                        }
-                        is ToolResult.Failure -> {
-                            operatorState = OperatorStateMachine.fail(operatorState, callId, result.error)
-                            bridge.setToolCallState(
-                                callId,
-                                ToolCallStatus.Failed(callName, result.error)
+                if (!coroutineContext[Job]!!.isCancelled) {
+                    synchronized(stateLock) {
+                        routingResult.fallbackReason?.let { reason ->
+                            operatorState = OperatorStateMachine.fallback(
+                                state = operatorState,
+                                id = callId,
+                                reason = reason
                             )
                         }
+
+                        when (result) {
+                            is ToolResult.Success -> {
+                                operatorState = OperatorStateMachine.complete(operatorState, callId, result.result)
+                            }
+                            is ToolResult.Failure -> {
+                                operatorState = OperatorStateMachine.fail(operatorState, callId, result.error)
+                                bridge.setToolCallState(
+                                    callId,
+                                    ToolCallStatus.Failed(callName, result.error)
+                                )
+                            }
+                        }
                     }
 
-                    inFlightJobs.remove(callId)
+                    response = buildToolResponse(callId, callName, result)
                 }
-
-                val response = buildToolResponse(callId, callName, result)
-                sendResponse(response)
-            } else {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val error = e.message ?: "Unhandled routing failure"
+                synchronized(stateLock) {
+                    operatorState = OperatorStateMachine.fail(operatorState, callId, error)
+                }
+                bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, error))
+                response = buildToolResponse(callId, callName, ToolResult.Failure(error))
+            } finally {
                 synchronized(stateLock) {
                     inFlightJobs.remove(callId)
                 }
             }
+
+            response?.let(sendResponse)
         }
 
         synchronized(stateLock) {

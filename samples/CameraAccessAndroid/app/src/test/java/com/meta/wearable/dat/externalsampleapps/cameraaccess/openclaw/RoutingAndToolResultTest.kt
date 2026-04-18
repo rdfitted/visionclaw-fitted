@@ -3,12 +3,15 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ToolHandler
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ToolRegistry
+import kotlinx.coroutines.CoroutineScope
 import kotlin.test.assertFailsWith
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
 
 class RoutingAndToolResultTest {
@@ -172,6 +175,58 @@ class RoutingAndToolResultTest {
             "Retry with execute, or re-enable the unavailable structured tool before trying again.",
             failure.hint
         )
+    }
+
+    @Test
+    fun toolCallRouterMarksThrownRouteAsFailedAndDoesNotLeaveCancelableJob() {
+        val bridge = OpenClawBridge()
+        val router = ToolCallRouter(
+            bridge = bridge,
+            scope = CoroutineScope(Job() + Dispatchers.Unconfined),
+            intentRouter = IntentRouter(
+                bridge = bridge,
+                structuredIntentsEnabledProvider = { true },
+                toolRegistry = ToolRegistry(bridge).apply {
+                    register(
+                        "execute",
+                        object : ToolHandler {
+                            override suspend fun execute(call: GeminiFunctionCall): ToolResult {
+                                throw IllegalStateException("Boom")
+                            }
+                        }
+                    )
+                }
+            )
+        )
+        var response: org.json.JSONObject? = null
+
+        router.dispatch(
+            call = GeminiFunctionCall(
+                id = "call-router-failure",
+                name = "execute",
+                args = mapOf("task" to "Do something")
+            ),
+            sendResponse = { response = it }
+        )
+
+        val functionResponse = response
+            ?.getJSONObject("toolResponse")
+            ?.getJSONArray("functionResponses")
+            ?.getJSONObject(0)
+            ?: error("Expected a tool response")
+        assertEquals("Boom", functionResponse.getJSONObject("response").getString("error"))
+
+        val failedBeforeCancel = assertIs<ToolCallStatus.Failed>(
+            bridge.toolCallStates.value.getValue("call-router-failure").status
+        )
+        assertEquals("Boom", failedBeforeCancel.error)
+
+        router.cancelToolCalls(listOf("call-router-failure"))
+
+        val failedAfterCancel = assertIs<ToolCallStatus.Failed>(
+            bridge.toolCallStates.value.getValue("call-router-failure").status
+        )
+        assertEquals("Boom", failedAfterCancel.error)
     }
 
     @Test
