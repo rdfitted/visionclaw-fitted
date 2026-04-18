@@ -3,6 +3,7 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorContext
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorStateMachine
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ConfirmationPolicy
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -16,7 +17,7 @@ import org.json.JSONObject
 class ToolCallRouter(
     private val bridge: OpenClawBridge,
     private val scope: CoroutineScope,
-    private val sessionStateManager: SessionStateManager? = null,
+    private val sessionStateManager: SessionStateManager,
     private val intentRouter: IntentRouter = IntentRouter(bridge)
 ) {
     private val stateLock = Any()
@@ -31,7 +32,7 @@ class ToolCallRouter(
         val callId = call.id
         val callName = call.name
         val taskDesc = extractTaskDesc(call)
-        sessionStateManager?.observeText(taskDesc)
+        sessionStateManager.observeText(taskDesc)
         val context = OperatorContext(
             sessionId = bridge.operatorSessionId,
             turnId = "turn-${turnCounter.incrementAndGet()}",
@@ -48,7 +49,7 @@ class ToolCallRouter(
                 )
             }
             bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, "Missing task payload"))
-            sessionStateManager?.recordToolResult(
+            sessionStateManager.recordToolResult(
                 toolName = callName,
                 result = ToolResult.Failure("Missing task payload")
             )
@@ -65,7 +66,7 @@ class ToolCallRouter(
             return
         }
 
-        val circuitBreakerFailure = synchronized(stateLock) {
+        val dispatchDecision = synchronized(stateLock) {
             operatorState = OperatorStateMachine.propose(
                 state = operatorState,
                 context = context,
@@ -81,22 +82,61 @@ class ToolCallRouter(
                     reason = "circuit_breaker_open"
                 )
                 val failureCount = operatorState.consecutiveFailures
-                ToolResult.Failure(
-                    error = "Tool execution is temporarily unavailable after $failureCount consecutive failures. " +
-                        "Please tell the user you cannot complete this action right now and suggest they check their OpenClaw gateway connection.",
-                    hint = "Check the OpenClaw gateway connection, wait for failures to stop, then retry the action."
+                DispatchDecision.Rejected(
+                    ToolResult.Failure(
+                        error = "Tool execution is temporarily unavailable after $failureCount consecutive failures. " +
+                            "Please tell the user you cannot complete this action right now and suggest they check their OpenClaw gateway connection.",
+                        hint = "Check the OpenClaw gateway connection, wait for failures to stop, then retry the action."
+                    )
                 )
             } else {
-                operatorState = OperatorStateMachine.dispatch(operatorState, callId)
-                null
+                when (val tier = ConfirmationPolicy.evaluate(call, sessionStateManager)) {
+                    is ConfirmationPolicy.Tier.AlwaysConfirm -> {
+                        val prompt = "Confirm before taking this action."
+                        operatorState = OperatorStateMachine.awaitConfirmation(operatorState, callId, prompt)
+                        sessionStateManager.setPendingConfirmation(callId, callName, taskDesc, prompt)
+                        DispatchDecision.AwaitingConfirmation(
+                            ToolResult.Success(
+                                "Confirmation required. Pending action id: $callId. Ask the user to approve this action, then call confirm_pending with pendingActionId=\"$callId\" and confirm=true. If they decline, call confirm_pending with pendingActionId=\"$callId\" and confirm=false."
+                            )
+                        )
+                    }
+
+                    is ConfirmationPolicy.Tier.ConditionalConfirm -> {
+                        operatorState = OperatorStateMachine.awaitConfirmation(operatorState, callId, tier.prompt)
+                        sessionStateManager.setPendingConfirmation(callId, callName, taskDesc, tier.prompt)
+                        DispatchDecision.AwaitingConfirmation(
+                            ToolResult.Success(
+                                "Confirmation required. Pending action id: $callId. ${tier.prompt} " +
+                                    "Ask the user to approve this action, then call confirm_pending with " +
+                                    "pendingActionId=\"$callId\" and confirm=true. If they decline, call " +
+                                    "confirm_pending with pendingActionId=\"$callId\" and confirm=false."
+                            )
+                        )
+                    }
+
+                    ConfirmationPolicy.Tier.Implicit -> {
+                        operatorState = OperatorStateMachine.dispatch(operatorState, callId)
+                        DispatchDecision.Dispatch
+                    }
+                }
             }
         }
 
-        if (circuitBreakerFailure != null) {
-            bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, "Circuit breaker open"))
-            sessionStateManager?.recordToolResult(callName, circuitBreakerFailure)
-            sendResponse(buildToolResponse(callId, callName, circuitBreakerFailure))
-            return
+        when (dispatchDecision) {
+            is DispatchDecision.Rejected -> {
+                bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, "Circuit breaker open"))
+                sessionStateManager.recordToolResult(callName, dispatchDecision.result)
+                sendResponse(buildToolResponse(callId, callName, dispatchDecision.result))
+                return
+            }
+
+            is DispatchDecision.AwaitingConfirmation -> {
+                sendResponse(buildToolResponse(callId, callName, dispatchDecision.result))
+                return
+            }
+
+            DispatchDecision.Dispatch -> Unit
         }
 
         val job = scope.launch(start = CoroutineStart.LAZY) {
@@ -129,7 +169,7 @@ class ToolCallRouter(
                         }
                     }
 
-                    sessionStateManager?.recordToolResult(callName, result)
+                    sessionStateManager.recordToolResult(callName, result)
                     response = buildToolResponse(callId, callName, result)
                 }
             } catch (e: CancellationException) {
@@ -141,7 +181,7 @@ class ToolCallRouter(
                     operatorState = OperatorStateMachine.fail(operatorState, callId, error)
                 }
                 bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, error))
-                sessionStateManager?.recordToolResult(callName, failure)
+                sessionStateManager.recordToolResult(callName, failure)
                 response = buildToolResponse(callId, callName, failure)
             } finally {
                 synchronized(stateLock) {
@@ -180,13 +220,24 @@ class ToolCallRouter(
                 operatorState = OperatorStateMachine.cancel(operatorState, id, "cancelled_during_shutdown")
                 Triple(id, job, toolName)
             }
+            val awaiting = operatorState.calls.values
+                .filterIsInstance<OperatorStateMachine.OperatorState.AwaitingConfirmation>()
+                .map { awaiting ->
+                    operatorState = OperatorStateMachine.cancel(
+                        operatorState,
+                        awaiting.id,
+                        "cancelled_during_shutdown"
+                    )
+                    Triple(awaiting.id, null, awaiting.toolName)
+                }
             inFlightJobs.clear()
+            sessionStateManager.clearPendingConfirmation()
             operatorState = OperatorStateMachine.State()
-            jobs
+            jobs + awaiting
         }
 
         for ((id, job, toolName) in cancelled) {
-            job.cancel()
+            job?.cancel()
             bridge.setToolCallState(id, ToolCallStatus.Cancelled(toolName))
         }
     }
@@ -211,5 +262,11 @@ class ToolCallRouter(
         return (call.args["task"] as? String)?.takeIf(String::isNotBlank)
             ?: (call.args["query"] as? String)?.takeIf(String::isNotBlank)
             ?: ""
+    }
+
+    private sealed interface DispatchDecision {
+        data class Rejected(val result: ToolResult.Failure) : DispatchDecision
+        data class AwaitingConfirmation(val result: ToolResult.Success) : DispatchDecision
+        data object Dispatch : DispatchDecision
     }
 }
