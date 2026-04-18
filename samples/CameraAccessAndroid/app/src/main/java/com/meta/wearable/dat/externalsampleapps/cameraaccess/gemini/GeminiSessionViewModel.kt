@@ -51,6 +51,8 @@ class GeminiSessionViewModel : ViewModel() {
                 else -> "$baseInstruction\n\n$sessionContext"
             }
         }
+    }.apply {
+        this.sessionStateManager = this@GeminiSessionViewModel.sessionStateManager
     }
     private val audioManager = AudioManager()
     private val eventClient = OpenClawEventClient()
@@ -200,6 +202,7 @@ class GeminiSessionViewModel : ViewModel() {
 
     fun stopSession() {
         eventClient.disconnect()
+        toolCallRouter?.invalidatePendingConfirmations("disconnect")
         toolCallRouter?.cancelAll()
         toolCallRouter = null
         audioManager.stopCapture()

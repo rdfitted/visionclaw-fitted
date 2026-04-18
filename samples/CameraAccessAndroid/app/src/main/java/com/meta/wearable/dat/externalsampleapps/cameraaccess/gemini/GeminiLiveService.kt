@@ -6,6 +6,7 @@ import android.util.Log
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiToolCall
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiToolCallCancellation
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolDeclarations
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import java.io.ByteArrayOutputStream
 import java.util.Timer
 import java.util.TimerTask
@@ -50,6 +51,7 @@ open class GeminiLiveService {
     var onOutputTranscription: ((String) -> Unit)? = null
     var onToolCall: ((GeminiToolCall) -> Unit)? = null
     var onToolCallCancellation: ((GeminiToolCallCancellation) -> Unit)? = null
+    var sessionStateManager: SessionStateManager? = null
 
     // Latency tracking
     private var lastUserSpeechEnd: Long = 0
@@ -59,6 +61,7 @@ open class GeminiLiveService {
     private val sendExecutor = Executors.newSingleThreadExecutor()
     private var connectCallback: ((Boolean) -> Unit)? = null
     private var timeoutTimer: Timer? = null
+    private var pendingReconnectVoiceNote: String? = null
 
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -95,6 +98,7 @@ open class GeminiLiveService {
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val msg = t.message ?: "Unknown error"
                 Log.e(TAG, "WebSocket failure: $msg")
+                invalidatePendingConfirmationsForDisconnect()
                 _connectionState.value = GeminiConnectionState.Error(msg)
                 _isModelSpeaking.value = false
                 resolveConnect(false)
@@ -103,6 +107,7 @@ open class GeminiLiveService {
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d(TAG, "WebSocket closing: $code $reason")
+                invalidatePendingConfirmationsForDisconnect()
                 _connectionState.value = GeminiConnectionState.Disconnected
                 _isModelSpeaking.value = false
                 resolveConnect(false)
@@ -111,6 +116,7 @@ open class GeminiLiveService {
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d(TAG, "WebSocket closed: $code $reason")
+                invalidatePendingConfirmationsForDisconnect()
                 _connectionState.value = GeminiConnectionState.Disconnected
                 _isModelSpeaking.value = false
             }
@@ -134,6 +140,7 @@ open class GeminiLiveService {
     fun disconnect() {
         timeoutTimer?.cancel()
         timeoutTimer = null
+        invalidatePendingConfirmationsForDisconnect()
         webSocket?.close(1000, null)
         webSocket = null
         onToolCall = null
@@ -264,6 +271,7 @@ open class GeminiLiveService {
             if (json.has("setupComplete")) {
                 _connectionState.value = GeminiConnectionState.Ready
                 resolveConnect(true)
+                flushReconnectVoiceNoteIfNeeded()
                 return
             }
 
@@ -271,6 +279,7 @@ open class GeminiLiveService {
             if (json.has("goAway")) {
                 val goAway = json.getJSONObject("goAway")
                 val seconds = goAway.optJSONObject("timeLeft")?.optInt("seconds", 0) ?: 0
+                invalidatePendingConfirmationsForDisconnect()
                 _connectionState.value = GeminiConnectionState.Disconnected
                 _isModelSpeaking.value = false
                 onDisconnected?.invoke("Server closing (time left: ${seconds}s)")
@@ -363,5 +372,21 @@ open class GeminiLiveService {
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing message: ${e.message}")
         }
+    }
+
+    private fun invalidatePendingConfirmationsForDisconnect() {
+        val manager = sessionStateManager ?: return
+        val hadPendingConfirmation = manager.pendingConfirmation.value != null
+        manager.invalidatePendingConfirmations("disconnect")
+        if (hadPendingConfirmation) {
+            pendingReconnectVoiceNote =
+                "System note: the last pending confirmation was cleared because the connection dropped. Ask for confirmation again before retrying that action."
+        }
+    }
+
+    private fun flushReconnectVoiceNoteIfNeeded() {
+        val note = pendingReconnectVoiceNote ?: return
+        pendingReconnectVoiceNote = null
+        sendTextMessage(note)
     }
 }
