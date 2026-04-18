@@ -44,6 +44,7 @@ class GeminiSessionViewModel : ViewModel() {
     companion object {
         private const val TAG = "GeminiSessionVM"
         private const val MAX_QUEUED_CRON_NOTIFICATIONS = 3
+        private const val MAX_SESSION_CONTEXT_CHARS = 800
     }
 
     private val _uiState = MutableStateFlow(GeminiUiState())
@@ -56,13 +57,7 @@ class GeminiSessionViewModel : ViewModel() {
     val effectiveResponseMode: StateFlow<ResponseMode> = _effectiveResponseMode.asStateFlow()
     private val geminiService = object : GeminiLiveService() {
         override fun buildSystemInstruction(): String {
-            val sessionContext = this@GeminiSessionViewModel.sessionStateManager.sessionContextBlock()
-            val baseInstruction = GeminiConfig.systemInstruction.trim()
-            return when {
-                sessionContext.isBlank() -> baseInstruction
-                baseInstruction.isBlank() -> sessionContext
-                else -> "$baseInstruction\n\n$sessionContext"
-            }
+            return this@GeminiSessionViewModel.buildSystemInstruction()
         }
 
         override fun triggerReconnectAfterModeChange(reason: String) {
@@ -386,6 +381,45 @@ class GeminiSessionViewModel : ViewModel() {
 
         // TODO: Tighten once reconnect retry count is exposed as a stable flow.
         return mode
+    }
+
+    private fun buildSystemInstruction(): String {
+        val baseInstruction = GeminiConfig.systemInstruction.trim()
+        val modeDirective = buildResponseModeDirective(effectiveResponseMode.value)
+        val toolIntentBlock =
+            "Tool intent hints: send_message is for outbound communication to a person or channel; set_reminder is for creating a time-based reminder or follow-up; capture_task is for saving a task or to-do to handle later."
+        val sessionContext = trimSessionContext(sessionStateManager.sessionContextBlock())
+
+        return listOfNotNull(
+            baseInstruction.takeIf { it.isNotBlank() },
+            modeDirective,
+            toolIntentBlock,
+            sessionContext.takeIf { it.isNotBlank() }
+        ).joinToString("\n\n")
+    }
+
+    private fun buildResponseModeDirective(mode: ResponseMode): String = when (mode) {
+        ResponseMode.FAST ->
+            "Response mode: FAST. Keep spoken replies short, lead with the answer, and prefer a single next step over extra explanation."
+
+        ResponseMode.NORMAL ->
+            "Response mode: NORMAL. Stay concise and natural, but include enough context to make the recommendation easy to trust and act on."
+
+        ResponseMode.FOCUSED ->
+            "Response mode: FOCUSED. Slow down slightly, state important assumptions, and be explicit about details that could change the outcome of the action."
+
+        ResponseMode.SILENT_ACT ->
+            "Response mode: SILENT_ACT. Minimize spoken output, use very short acknowledgments before tool calls, and let the action or result carry most of the interaction."
+    }
+
+    private fun trimSessionContext(sessionContext: String): String {
+        if (sessionContext.length <= MAX_SESSION_CONTEXT_CHARS) {
+            return sessionContext
+        }
+
+        return sessionContext
+            .take(MAX_SESSION_CONTEXT_CHARS - 3)
+            .trimEnd() + "..."
     }
 
 }
