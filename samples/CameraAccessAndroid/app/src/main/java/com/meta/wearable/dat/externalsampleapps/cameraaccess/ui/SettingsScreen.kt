@@ -151,7 +151,7 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 OutlinedTextField(
-                    value = confirmationPolicy.name.lowercase().replaceFirstChar { it.uppercase() }.replace("_", " "),
+                    value = confirmationPolicy.displayLabel(),
                     onValueChange = {},
                     readOnly = true,
                     label = { Text("Confirmation Policy") },
@@ -164,7 +164,7 @@ fun SettingsScreen(
                 ) {
                     ConfirmationPolicy.entries.forEach { policy ->
                         DropdownMenuItem(
-                            text = { Text(policy.name.lowercase().replaceFirstChar { it.uppercase() }.replace("_", " ")) },
+                            text = { Text(policy.displayLabel()) },
                             onClick = {
                                 confirmationPolicy = policy
                                 expanded = false
@@ -325,6 +325,12 @@ fun SettingsScreen(
             },
         )
     }
+}
+
+private fun ConfirmationPolicy.displayLabel(): String = when (this) {
+    ConfirmationPolicy.Standard -> "Standard"
+    ConfirmationPolicy.AlwaysConfirmOutbound -> "Always Confirm Outbound"
+    ConfirmationPolicy.Minimal -> "Minimal"
 }
 
 @Composable
