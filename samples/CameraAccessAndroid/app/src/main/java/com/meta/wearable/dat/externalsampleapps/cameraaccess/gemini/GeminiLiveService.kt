@@ -97,20 +97,24 @@ open class GeminiLiveService {
         val request = Request.Builder().url(url).build()
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (this@GeminiLiveService.webSocket !== webSocket) return
                 Log.d(TAG, "WebSocket opened")
                 _connectionState.value = GeminiConnectionState.SettingUp
                 sendSetupMessage()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (this@GeminiLiveService.webSocket !== webSocket) return
                 handleMessage(text)
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                if (this@GeminiLiveService.webSocket !== webSocket) return
                 handleMessage(bytes.utf8())
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (this@GeminiLiveService.webSocket !== webSocket) return
                 val msg = t.message ?: "Unknown error"
                 Log.e(TAG, "WebSocket failure: $msg")
                 invalidatePendingConfirmationsForDisconnect()
@@ -121,6 +125,7 @@ open class GeminiLiveService {
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                if (this@GeminiLiveService.webSocket !== webSocket) return
                 Log.d(TAG, "WebSocket closing: $code $reason")
                 invalidatePendingConfirmationsForDisconnect()
                 _connectionState.value = GeminiConnectionState.Disconnected
@@ -130,6 +135,7 @@ open class GeminiLiveService {
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (this@GeminiLiveService.webSocket !== webSocket) return
                 Log.d(TAG, "WebSocket closed: $code $reason")
                 invalidatePendingConfirmationsForDisconnect()
                 _connectionState.value = GeminiConnectionState.Disconnected
@@ -241,7 +247,30 @@ open class GeminiLiveService {
         }
     }
 
+    open fun restartForModeChange(reason: String = "mode_change") {
+        queueReconnectVoiceNote(
+            "System note: response mode changed. Follow the latest response-mode guidance for future replies and tool use."
+        )
+        stopSessionForRestart(reason)
+        triggerReconnectAfterModeChange(reason)
+    }
+
     // Private
+
+    protected open fun stopSessionForRestart(reason: String) {
+        timeoutTimer?.cancel()
+        timeoutTimer = null
+
+        val currentWebSocket = webSocket
+        webSocket = null
+        _connectionState.value = GeminiConnectionState.Disconnected
+        _isModelSpeaking.value = false
+        resolveConnect(false)
+        currentWebSocket?.close(1000, reason)
+    }
+
+    protected open fun triggerReconnectAfterModeChange(reason: String) {
+    }
 
     private fun resolveConnect(success: Boolean) {
         val cb = connectCallback
@@ -413,8 +442,9 @@ open class GeminiLiveService {
         val hadPendingConfirmation = manager.pendingConfirmation.value != null
         manager.invalidatePendingConfirmations("disconnect")
         if (hadPendingConfirmation) {
-            pendingReconnectVoiceNote =
+            queueReconnectVoiceNote(
                 "System note: the last pending confirmation was cleared because the connection dropped. Ask for confirmation again before retrying that action."
+            )
         }
     }
 
@@ -422,6 +452,14 @@ open class GeminiLiveService {
         val note = pendingReconnectVoiceNote ?: return
         if (sendTextMessage(note)) {
             pendingReconnectVoiceNote = null
+        }
+    }
+
+    private fun queueReconnectVoiceNote(note: String) {
+        pendingReconnectVoiceNote = when (val existing = pendingReconnectVoiceNote?.trim()) {
+            null,
+            "" -> note
+            else -> "$existing\n$note"
         }
     }
 }
