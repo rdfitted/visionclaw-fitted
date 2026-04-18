@@ -181,6 +181,34 @@ class RoutingAndToolResultTest {
     }
 
     @Test
+    fun sendMessageFallsBackToExecutePayloadWhenStructuredRoutingIsDisabled() = runBlocking {
+        val bridge = RecordingBridge()
+        val sessionStateManager = SessionStateManager(bridge).apply { reset("session-1") }
+        val router = IntentRouter(
+            bridge = bridge,
+            sessionStateManager = sessionStateManager,
+            structuredIntentsEnabledProvider = { false }
+        )
+
+        val result = router.route(
+            GeminiFunctionCall(
+                id = "send-kill-switch",
+                name = "send_message",
+                args = mapOf(
+                    "recipient" to "Sam Carter",
+                    "content" to "Running 5 late",
+                    "channel" to "sms"
+                )
+            )
+        )
+
+        assertEquals("kill_switch", result.fallbackReason)
+        assertEquals("Send an SMS to Sam Carter: \"Running 5 late\".", bridge.lastTask)
+        assertEquals("send_message", bridge.lastToolName)
+        assertEquals("ok", assertIs<ToolResult.Success>(result.result).result)
+    }
+
+    @Test
     fun toolCallRouterMarksThrownRouteAsFailedAndDoesNotLeaveCancelableJob() {
         val bridge = OpenClawBridge()
         val sessionStateManager = SessionStateManager(bridge)
@@ -241,5 +269,23 @@ class RoutingAndToolResultTest {
 
         assertEquals("Boom", json.getString("error"))
         assertFalse(json.has("hint"))
+    }
+
+    private class RecordingBridge : OpenClawBridge() {
+        var lastTask: String? = null
+        var lastToolName: String? = null
+
+        override suspend fun delegateTask(
+            callId: String,
+            task: String,
+            toolName: String
+        ): ToolResult {
+            lastTask = task
+            lastToolName = toolName
+            return ToolResult.Success("ok")
+        }
+
+        override fun resetSession() {
+        }
     }
 }

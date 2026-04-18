@@ -1,6 +1,8 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.gemini
 
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolDeclarations
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
+import org.json.JSONArray
 
 object GeminiConfig {
     const val WEBSOCKET_BASE_URL =
@@ -32,6 +34,8 @@ object GeminiConfig {
 
     val openClawGatewayToken: String
         get() = SettingsManager.openClawGatewayToken
+
+    fun toolDeclarationsJSON(): JSONArray = ToolDeclarations.allDeclarationsJSON()
 
     fun websocketURL(): String? {
         if (apiKey == "YOUR_GEMINI_API_KEY" || apiKey.isEmpty()) return null

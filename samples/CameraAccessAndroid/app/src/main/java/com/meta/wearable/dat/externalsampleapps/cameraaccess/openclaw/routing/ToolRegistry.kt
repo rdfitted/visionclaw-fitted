@@ -1,7 +1,11 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing
 
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.handlers.CaptureTaskHandler
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.handlers.SearchWebHandler
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.handlers.SendMessageHandler
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.handlers.SetReminderHandler
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 
 sealed interface ToolHandlerResolution {
     data class Available(val handler: ToolHandler) : ToolHandlerResolution
@@ -11,6 +15,7 @@ sealed interface ToolHandlerResolution {
 
 class ToolRegistry(
     bridge: OpenClawBridge,
+    sessionStateManager: SessionStateManager? = null,
     confirmPendingHandler: ToolHandler? = null,
     disabledTools: Set<String> = emptySet()
 ) {
@@ -20,6 +25,11 @@ class ToolRegistry(
     init {
         register("execute", GenericExecuteHandler(bridge))
         register("search_web", SearchWebHandler(bridge))
+        sessionStateManager?.let { manager ->
+            register("send_message", SendMessageHandler(bridge, manager))
+        }
+        register("set_reminder", SetReminderHandler(bridge))
+        register("capture_task", CaptureTaskHandler(bridge))
         confirmPendingHandler?.let { register("confirm_pending", it) }
     }
 

@@ -22,7 +22,7 @@ object SettingsManager {
     private val _confirmationPolicy = MutableStateFlow(ConfirmationPolicy.Standard)
     val confirmationPolicyFlow: StateFlow<ConfirmationPolicy> = _confirmationPolicy.asStateFlow()
 
-    private val _structuredIntentsEnabled = MutableStateFlow(false)
+    private val _structuredIntentsEnabled = MutableStateFlow(true)
     val structuredIntentsEnabledFlow: StateFlow<Boolean> = _structuredIntentsEnabled.asStateFlow()
 
     fun init(context: Context) {
@@ -93,7 +93,7 @@ object SettingsManager {
         set(value) = prefs.edit().putString(KEY_CONFIRMATION_POLICY, value.storageValue).apply()
 
     var structuredIntentsEnabled: Boolean
-        get() = prefs.getBoolean(KEY_STRUCTURED_INTENTS_ENABLED, false)
+        get() = prefs.getBoolean(KEY_STRUCTURED_INTENTS_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_STRUCTURED_INTENTS_ENABLED, value).apply()
 
     fun resetAll() {
