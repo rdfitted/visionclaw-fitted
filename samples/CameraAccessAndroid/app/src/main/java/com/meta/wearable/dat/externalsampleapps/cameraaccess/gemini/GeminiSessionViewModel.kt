@@ -10,10 +10,13 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionSta
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawEventClient
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawConnectionState
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawNotification
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawNotificationKind
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallStatus
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallRouter
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.stream.StreamingMode
+import java.util.ArrayDeque
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +41,7 @@ data class GeminiUiState(
 class GeminiSessionViewModel : ViewModel() {
     companion object {
         private const val TAG = "GeminiSessionVM"
+        private const val MAX_QUEUED_CRON_NOTIFICATIONS = 3
     }
 
     private val _uiState = MutableStateFlow(GeminiUiState())
@@ -61,9 +65,11 @@ class GeminiSessionViewModel : ViewModel() {
     private val sessionContextRefreshTracker = SessionContextRefreshTracker(sessionStateManager, geminiService)
     private val audioManager = AudioManager()
     private val eventClient = OpenClawEventClient()
+    private val queuedCronNotifications = ArrayDeque<OpenClawNotification>()
     private var lastVideoFrameTime: Long = 0
     private var stateObservationJob: Job? = null
     private var toolCallRouter: ToolCallRouter? = null
+    private var previousPendingConfirmationId: String? = null
 
     var streamingMode: StreamingMode = StreamingMode.GLASSES
 
@@ -79,6 +85,8 @@ class GeminiSessionViewModel : ViewModel() {
 
         sessionStateManager.reset(openClawBridge.operatorSessionId)
         sessionContextRefreshTracker.markCurrentContextSent()
+        queuedCronNotifications.clear()
+        previousPendingConfirmationId = null
         _uiState.value = _uiState.value.copy(isGeminiActive = true)
 
         // Wire audio callbacks
@@ -165,6 +173,10 @@ class GeminiSessionViewModel : ViewModel() {
                         openClawConnectionState = openClawConnectionState
                     )
                 }.collect { observedState ->
+                    val hadPendingConfirmation = previousPendingConfirmationId != null
+                    val hasPendingConfirmation = observedState.pendingConfirmation != null
+                    previousPendingConfirmationId = observedState.pendingConfirmation?.id
+
                     _uiState.update { current ->
                         current.copy(
                             connectionState = observedState.connectionState,
@@ -173,6 +185,10 @@ class GeminiSessionViewModel : ViewModel() {
                             pendingConfirmation = observedState.pendingConfirmation,
                             openClawConnectionState = observedState.openClawConnectionState,
                         )
+                    }
+
+                    if (hadPendingConfirmation && !hasPendingConfirmation) {
+                        flushQueuedCronNotifications()
                     }
                 }
             }
@@ -201,10 +217,19 @@ class GeminiSessionViewModel : ViewModel() {
 
                 // Connect to OpenClaw event stream for proactive notifications
                 if (SettingsManager.proactiveNotificationsEnabled) {
-                    eventClient.onNotification = { text ->
+                    eventClient.onNotification = notification@{ notification ->
                         val state = _uiState.value
-                        if (state.isGeminiActive && state.connectionState == GeminiConnectionState.Ready) {
-                            geminiService.sendTextMessage(text)
+                        if (!state.isGeminiActive || state.connectionState != GeminiConnectionState.Ready) {
+                            return@notification
+                        }
+
+                        if (sessionStateManager.pendingConfirmation.value != null) {
+                            when (notification.kind) {
+                                OpenClawNotificationKind.HEARTBEAT -> Unit
+                                OpenClawNotificationKind.CRON -> enqueueCronNotification(notification)
+                            }
+                        } else {
+                            geminiService.sendTextMessage(notification.text)
                         }
                     }
                     eventClient.connect()
@@ -215,6 +240,8 @@ class GeminiSessionViewModel : ViewModel() {
 
     fun stopSession() {
         eventClient.disconnect()
+        queuedCronNotifications.clear()
+        previousPendingConfirmationId = null
         stateObservationJob?.cancel()
         stateObservationJob = null
         audioManager.stopCapture()
@@ -253,7 +280,31 @@ class GeminiSessionViewModel : ViewModel() {
 
     override fun onCleared() {
         stopSession()
+        sessionStateManager.shutdown()
         openClawBridge.shutdown()
         super.onCleared()
+    }
+
+    private fun enqueueCronNotification(notification: OpenClawNotification) {
+        if (queuedCronNotifications.size >= MAX_QUEUED_CRON_NOTIFICATIONS) {
+            queuedCronNotifications.removeFirst()
+        }
+        queuedCronNotifications.addLast(notification)
+    }
+
+    private fun flushQueuedCronNotifications() {
+        val state = _uiState.value
+        if (!state.isGeminiActive || state.connectionState != GeminiConnectionState.Ready) {
+            return
+        }
+
+        while (queuedCronNotifications.isNotEmpty()) {
+            val notification = queuedCronNotifications.removeFirst()
+            if (!geminiService.sendTextMessage(notification.text)) {
+                queuedCronNotifications.addFirst(notification)
+                Log.d(TAG, "Failed to flush queued cron notification; leaving it queued")
+                return
+            }
+        }
     }
 }
