@@ -103,13 +103,16 @@ sealed class OpenClawConnectionState {
 
 object ToolDeclarations {
     fun allDeclarationsJSON(): JSONArray {
-        return JSONArray().put(executeJSON())
+        return JSONArray().apply {
+            put(executeJSON())
+            put(searchWebJSON())
+        }
     }
 
     private fun executeJSON(): JSONObject {
         return JSONObject().apply {
             put("name", "execute")
-            put("description", "Your only way to take action. You have no memory, storage, or ability to do anything on your own -- use this tool for everything: sending messages, searching the web, adding to lists, setting reminders, creating notes, research, drafts, scheduling, smart home control, app interactions, or any request that goes beyond answering a question. When in doubt, use this tool.")
+            put("description", "Your way to take action for complex tasks. Use this tool for: sending messages, adding to lists, setting reminders, creating notes, drafts, scheduling, smart home control, app interactions, or any request that requires multi-step logic or specific app integrations. DO NOT use this for simple fact-finding or general web searches.")
             put("parameters", JSONObject().apply {
                 put("type", "object")
                 put("properties", JSONObject().apply {
@@ -121,6 +124,31 @@ object ToolDeclarations {
                 put("required", JSONArray().put("task"))
             })
             put("behavior", "BLOCKING")
+        }
+    }
+
+    private fun searchWebJSON(): JSONObject {
+        return JSONObject().apply {
+            put("name", "search_web")
+            put("description", "The primary tool for fact-finding, research, and general information retrieval. Use this whenever you need to look something up on the web, verify a fact, or gather information about the world.")
+            put("parameters", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("query", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "The search query to look up. Be specific for better results.")
+                    })
+                    put("hint", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Optional hint field used on rejection to explain why a specific search was requested.")
+                    })
+                })
+                put("required", JSONArray().put("query"))
+            })
+            put("behavior", "BLOCKING")
+            // Invocation Condition hint in description or as a custom field if supported by the parser
+            // Based on instructions: "register search_web declaration with explicit *Invocation Condition*"
+            put("invocation_condition", "Use search_web for all factual queries, news, weather, or information retrieval. Use execute only for actions (sending, saving, controlling).")
         }
     }
 }
