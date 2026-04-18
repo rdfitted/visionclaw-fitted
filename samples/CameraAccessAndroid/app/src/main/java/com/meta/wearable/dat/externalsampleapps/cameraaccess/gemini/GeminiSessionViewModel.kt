@@ -150,49 +150,29 @@ class GeminiSessionViewModel : ViewModel() {
             }
 
             stateObservationJob = viewModelScope.launch {
-                launch {
-                    combine(
-                        openClawBridge.lastToolCallStatus,
-                        openClawBridge.connectionState,
-                        sessionStateManager.pendingConfirmation
-                    ) { toolCallStatus, openClawConnectionState, pendingConfirmation ->
-                        Triple(toolCallStatus, openClawConnectionState, pendingConfirmation)
-                    }.collect { (toolCallStatus, openClawConnectionState, pendingConfirmation) ->
-                        _uiState.update { current ->
-                            current.copy(
-                                connectionState = geminiService.connectionState.value,
-                                isModelSpeaking = geminiService.isModelSpeaking.value,
-                                toolCallStatus = toolCallStatus,
-                                pendingConfirmation = pendingConfirmation,
-                                openClawConnectionState = openClawConnectionState,
-                            )
-                        }
-                    }
-                }
-
-                launch {
-                    geminiService.connectionState.collect { connectionState ->
-                        _uiState.update { current -> current.copy(connectionState = connectionState) }
-                    }
-                }
-
-                launch {
-                    geminiService.isModelSpeaking.collect { isModelSpeaking ->
-                        _uiState.update { current -> current.copy(isModelSpeaking = isModelSpeaking) }
-                    }
-                }
-
-                launch {
-                    openClawBridge.lastToolCallStatus.collect { toolCallStatus ->
-                        _uiState.update { current -> current.copy(toolCallStatus = toolCallStatus) }
-                    }
-                }
-
-                launch {
-                    openClawBridge.connectionState.collect { openClawConnectionState ->
-                        _uiState.update { current ->
-                            current.copy(openClawConnectionState = openClawConnectionState)
-                        }
+                combine(
+                    geminiService.connectionState,
+                    geminiService.isModelSpeaking,
+                    openClawBridge.lastToolCallStatus,
+                    openClawBridge.connectionState,
+                    sessionStateManager.pendingConfirmation
+                ) { connectionState, isModelSpeaking, toolCallStatus, openClawConnectionState, pendingConfirmation ->
+                    GeminiUiState(
+                        connectionState = connectionState,
+                        isModelSpeaking = isModelSpeaking,
+                        toolCallStatus = toolCallStatus,
+                        pendingConfirmation = pendingConfirmation,
+                        openClawConnectionState = openClawConnectionState
+                    )
+                }.collect { observedState ->
+                    _uiState.update { current ->
+                        current.copy(
+                            connectionState = observedState.connectionState,
+                            isModelSpeaking = observedState.isModelSpeaking,
+                            toolCallStatus = observedState.toolCallStatus,
+                            pendingConfirmation = observedState.pendingConfirmation,
+                            openClawConnectionState = observedState.openClawConnectionState,
+                        )
                     }
                 }
             }
