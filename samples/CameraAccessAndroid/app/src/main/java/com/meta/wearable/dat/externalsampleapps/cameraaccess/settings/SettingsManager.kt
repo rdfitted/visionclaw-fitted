@@ -19,7 +19,7 @@ object SettingsManager {
     private val _responseMode = MutableStateFlow(ResponseMode.NATURAL)
     val responseModeFlow: StateFlow<ResponseMode> = _responseMode.asStateFlow()
 
-    private val _confirmationPolicy = MutableStateFlow(ConfirmationPolicy.NEVER)
+    private val _confirmationPolicy = MutableStateFlow(ConfirmationPolicy.Standard)
     val confirmationPolicyFlow: StateFlow<ConfirmationPolicy> = _confirmationPolicy.asStateFlow()
 
     private val _structuredIntentsEnabled = MutableStateFlow(false)

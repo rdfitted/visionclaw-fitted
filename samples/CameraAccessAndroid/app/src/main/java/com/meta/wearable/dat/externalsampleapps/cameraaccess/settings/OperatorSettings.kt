@@ -13,13 +13,25 @@ enum class ResponseMode(val storageValue: String) {
 }
 
 enum class ConfirmationPolicy(val storageValue: String) {
-    NEVER("never"),
-    SENSITIVE_ONLY("sensitive_only"),
-    ALWAYS("always");
+    Standard("standard"),
+    AlwaysConfirmOutbound("always_confirm_outbound"),
+    Minimal("minimal");
 
     companion object {
         fun fromStorageValue(value: String?): ConfirmationPolicy {
-            return entries.firstOrNull { it.storageValue == value } ?: NEVER
+            return when (value) {
+                AlwaysConfirmOutbound.storageValue,
+                "always" -> AlwaysConfirmOutbound
+
+                Minimal.storageValue,
+                "never" -> Minimal
+
+                Standard.storageValue,
+                "sensitive_only",
+                null -> Standard
+
+                else -> Standard
+            }
         }
     }
 }

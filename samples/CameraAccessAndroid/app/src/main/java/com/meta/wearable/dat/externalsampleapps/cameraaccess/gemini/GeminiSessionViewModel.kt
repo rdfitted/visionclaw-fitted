@@ -4,6 +4,9 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.PendingConfirmation
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionContextRefreshTracker
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawEventClient
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawConnectionState
@@ -12,11 +15,12 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallRo
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.stream.StreamingMode
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class GeminiUiState(
@@ -27,6 +31,7 @@ data class GeminiUiState(
     val userTranscript: String = "",
     val aiTranscript: String = "",
     val toolCallStatus: ToolCallStatus = ToolCallStatus.Idle,
+    val pendingConfirmation: PendingConfirmation? = null,
     val openClawConnectionState: OpenClawConnectionState = OpenClawConnectionState.NotConfigured,
 )
 
@@ -38,8 +43,22 @@ class GeminiSessionViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(GeminiUiState())
     val uiState: StateFlow<GeminiUiState> = _uiState.asStateFlow()
 
-    private val geminiService = GeminiLiveService()
     private val openClawBridge = OpenClawBridge()
+    private val sessionStateManager = SessionStateManager(openClawBridge)
+    private val geminiService = object : GeminiLiveService() {
+        override fun buildSystemInstruction(): String {
+            val sessionContext = this@GeminiSessionViewModel.sessionStateManager.sessionContextBlock()
+            val baseInstruction = GeminiConfig.systemInstruction.trim()
+            return when {
+                sessionContext.isBlank() -> baseInstruction
+                baseInstruction.isBlank() -> sessionContext
+                else -> "$baseInstruction\n\n$sessionContext"
+            }
+        }
+    }.apply {
+        this.sessionStateManager = this@GeminiSessionViewModel.sessionStateManager
+    }
+    private val sessionContextRefreshTracker = SessionContextRefreshTracker(sessionStateManager, geminiService)
     private val audioManager = AudioManager()
     private val eventClient = OpenClawEventClient()
     private var lastVideoFrameTime: Long = 0
@@ -58,6 +77,8 @@ class GeminiSessionViewModel : ViewModel() {
             return
         }
 
+        sessionStateManager.reset(openClawBridge.operatorSessionId)
+        sessionContextRefreshTracker.markCurrentContextSent()
         _uiState.value = _uiState.value.copy(isGeminiActive = true)
 
         // Wire audio callbacks
@@ -76,6 +97,8 @@ class GeminiSessionViewModel : ViewModel() {
         }
 
         geminiService.onTurnComplete = {
+            sessionStateManager.updateObjective(_uiState.value.userTranscript)
+            sessionContextRefreshTracker.sendRefreshIfChanged()
             _uiState.value = _uiState.value.copy(userTranscript = "")
         }
 
@@ -104,13 +127,18 @@ class GeminiSessionViewModel : ViewModel() {
         // Check OpenClaw and start session
         viewModelScope.launch {
             openClawBridge.checkConnection()
-            openClawBridge.resetSession()
-            toolCallRouter = ToolCallRouter(openClawBridge, viewModelScope)
+            val router = ToolCallRouter(
+                bridge = openClawBridge,
+                scope = viewModelScope,
+                sessionStateManager = sessionStateManager
+            )
+            toolCallRouter = router
+            sessionStateManager.setToolCallRouter(router)
 
             geminiService.onToolCall = { toolCall ->
                 viewModelScope.launch {
                     for (call in toolCall.functionCalls) {
-                        toolCallRouter?.dispatch(call) { response ->
+                        router.dispatch(call) { response ->
                             geminiService.sendToolResponse(response)
                         }
                     }
@@ -118,19 +146,34 @@ class GeminiSessionViewModel : ViewModel() {
             }
 
             geminiService.onToolCallCancellation = { cancellation ->
-                toolCallRouter?.cancelToolCalls(cancellation.ids)
+                router.cancelToolCalls(cancellation.ids)
             }
 
-            // Observe service state
             stateObservationJob = viewModelScope.launch {
-                while (isActive) {
-                    delay(100)
-                    _uiState.value = _uiState.value.copy(
-                        connectionState = geminiService.connectionState.value,
-                        isModelSpeaking = geminiService.isModelSpeaking.value,
-                        toolCallStatus = openClawBridge.lastToolCallStatus.value,
-                        openClawConnectionState = openClawBridge.connectionState.value,
+                combine(
+                    geminiService.connectionState,
+                    geminiService.isModelSpeaking,
+                    openClawBridge.lastToolCallStatus,
+                    openClawBridge.connectionState,
+                    sessionStateManager.pendingConfirmation
+                ) { connectionState, isModelSpeaking, toolCallStatus, openClawConnectionState, pendingConfirmation ->
+                    GeminiUiState(
+                        connectionState = connectionState,
+                        isModelSpeaking = isModelSpeaking,
+                        toolCallStatus = toolCallStatus,
+                        pendingConfirmation = pendingConfirmation,
+                        openClawConnectionState = openClawConnectionState
                     )
+                }.collect { observedState ->
+                    _uiState.update { current ->
+                        current.copy(
+                            connectionState = observedState.connectionState,
+                            isModelSpeaking = observedState.isModelSpeaking,
+                            toolCallStatus = observedState.toolCallStatus,
+                            pendingConfirmation = observedState.pendingConfirmation,
+                            openClawConnectionState = observedState.openClawConnectionState,
+                        )
+                    }
                 }
             }
 
@@ -141,13 +184,8 @@ class GeminiSessionViewModel : ViewModel() {
                         is GeminiConnectionState.Error -> state.message
                         else -> "Failed to connect to Gemini"
                     }
+                    stopSession()
                     _uiState.value = _uiState.value.copy(errorMessage = msg)
-                    geminiService.disconnect()
-                    stateObservationJob?.cancel()
-                    _uiState.value = _uiState.value.copy(
-                        isGeminiActive = false,
-                        connectionState = GeminiConnectionState.Disconnected
-                    )
                     return@connect
                 }
 
@@ -155,14 +193,9 @@ class GeminiSessionViewModel : ViewModel() {
                 try {
                     audioManager.startCapture()
                 } catch (e: Exception) {
+                    stopSession()
                     _uiState.value = _uiState.value.copy(
                         errorMessage = "Mic capture failed: ${e.message}"
-                    )
-                    geminiService.disconnect()
-                    stateObservationJob?.cancel()
-                    _uiState.value = _uiState.value.copy(
-                        isGeminiActive = false,
-                        connectionState = GeminiConnectionState.Disconnected
                     )
                 }
 
@@ -182,13 +215,26 @@ class GeminiSessionViewModel : ViewModel() {
 
     fun stopSession() {
         eventClient.disconnect()
-        toolCallRouter?.cancelAll()
-        toolCallRouter = null
-        audioManager.stopCapture()
-        geminiService.disconnect()
         stateObservationJob?.cancel()
         stateObservationJob = null
+        audioManager.stopCapture()
+        geminiService.disconnect()
+        sessionStateManager.reset(openClawBridge.operatorSessionId)
+        sessionStateManager.setToolCallRouter(null)
+        toolCallRouter = null
         _uiState.value = GeminiUiState()
+    }
+
+    fun confirmPendingAction(pendingActionId: String) {
+        viewModelScope.launch {
+            toolCallRouter?.confirmPendingAction(pendingActionId)
+        }
+    }
+
+    fun cancelPendingAction(pendingActionId: String) {
+        viewModelScope.launch {
+            toolCallRouter?.cancelPendingAction(pendingActionId, "user_declined")
+        }
     }
 
     fun sendVideoFrameIfThrottled(bitmap: Bitmap) {

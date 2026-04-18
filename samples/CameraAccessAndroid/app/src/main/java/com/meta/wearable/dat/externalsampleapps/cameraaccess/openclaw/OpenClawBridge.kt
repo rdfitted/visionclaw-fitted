@@ -23,10 +23,16 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class ConversationEntry(
+    val role: String,
+    val content: String,
+    val timestamp: Long
+)
+
 open class OpenClawBridge {
     companion object {
         private const val TAG = "OpenClawBridge"
-        private const val MAX_HISTORY_TURNS = 10
+        internal const val MAX_HISTORY_TURNS = 10
     }
 
     private val flowScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -57,9 +63,26 @@ open class OpenClawBridge {
         .build()
 
     private var sessionKey: String = "agent:main:glass"
-    private val conversationHistory = mutableListOf<JSONObject>()
+    private val _conversationHistory = MutableStateFlow<List<ConversationEntry>>(emptyList())
+    val conversationHistory: StateFlow<List<ConversationEntry>> = _conversationHistory.asStateFlow()
     val operatorSessionId: String
         get() = sessionKey
+
+    internal fun appendConversationEntry(
+        role: String,
+        content: String,
+        timestamp: Long = System.currentTimeMillis()
+    ) {
+        _conversationHistory.update { current ->
+            trimConversationHistory(
+                current + ConversationEntry(
+                    role = role,
+                    content = content,
+                    timestamp = timestamp
+                )
+            )
+        }
+    }
 
     suspend fun checkConnection() = withContext(Dispatchers.IO) {
         if (!GeminiConfig.isOpenClawConfigured) {
@@ -93,8 +116,9 @@ open class OpenClawBridge {
         }
     }
 
-    fun resetSession() {
-        conversationHistory.clear()
+    open fun resetSession() {
+        _toolCallStates.value = emptyMap()
+        _conversationHistory.value = emptyList()
         Log.d(TAG, "Session reset (key retained: $sessionKey)")
     }
 
@@ -112,24 +136,14 @@ open class OpenClawBridge {
         val url = "${GeminiConfig.openClawHost}:${GeminiConfig.openClawPort}/v1/chat/completions"
 
         // Append user message
-        conversationHistory.add(JSONObject().apply {
-            put("role", "user")
-            put("content", task)
-        })
+        appendConversationEntry(role = "user", content = task)
 
-        // Trim history
-        if (conversationHistory.size > MAX_HISTORY_TURNS * 2) {
-            val trimmed = conversationHistory.takeLast(MAX_HISTORY_TURNS * 2)
-            conversationHistory.clear()
-            conversationHistory.addAll(trimmed)
-        }
-
-        Log.d(TAG, "Sending ${conversationHistory.size} messages in conversation")
+        Log.d(TAG, "Sending ${conversationHistory.value.size} messages in conversation")
 
         try {
             val messagesArray = JSONArray()
-            for (msg in conversationHistory) {
-                messagesArray.put(msg)
+            for (msg in conversationHistory.value) {
+                messagesArray.put(msg.toJson())
             }
 
             val body = JSONObject().apply {
@@ -165,19 +179,13 @@ open class OpenClawBridge {
                 ?.optString("content", "")
 
             if (!content.isNullOrEmpty()) {
-                conversationHistory.add(JSONObject().apply {
-                    put("role", "assistant")
-                    put("content", content)
-                })
+                appendConversationEntry(role = "assistant", content = content)
                 Log.d(TAG, "Agent result: ${content.take(200)}")
                 setToolCallState(callId, ToolCallStatus.Completed(toolName))
                 return@withContext ToolResult.Success(content)
             }
 
-            conversationHistory.add(JSONObject().apply {
-                put("role", "assistant")
-                put("content", responseBody)
-            })
+            appendConversationEntry(role = "assistant", content = responseBody)
             Log.d(TAG, "Agent raw: ${responseBody.take(200)}")
             setToolCallState(callId, ToolCallStatus.Completed(toolName))
             return@withContext ToolResult.Success(responseBody)
@@ -188,4 +196,18 @@ open class OpenClawBridge {
         }
     }
 
+    private fun trimConversationHistory(history: List<ConversationEntry>): List<ConversationEntry> {
+        return if (history.size > MAX_HISTORY_TURNS * 2) {
+            history.takeLast(MAX_HISTORY_TURNS * 2)
+        } else {
+            history
+        }
+    }
+
+    private fun ConversationEntry.toJson(): JSONObject {
+        return JSONObject().apply {
+            put("role", role)
+            put("content", content)
+        }
+    }
 }

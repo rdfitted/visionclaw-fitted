@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +20,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,10 +38,13 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.gemini.GeminiConnec
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.gemini.GeminiUiState
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawConnectionState
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallStatus
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.PendingConfirmation
 
 @Composable
 fun GeminiOverlay(
     uiState: GeminiUiState,
+    onConfirm: (String) -> Unit,
+    onCancel: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -65,6 +71,15 @@ fun GeminiOverlay(
         if (toolStatus !is ToolCallStatus.Idle) {
             Spacer(modifier = Modifier.height(4.dp))
             ToolCallStatusView(status = toolStatus)
+        }
+
+        uiState.pendingConfirmation?.let { pendingConfirmation ->
+            Spacer(modifier = Modifier.height(4.dp))
+            PendingConfirmationCard(
+                pendingConfirmation = pendingConfirmation,
+                onConfirm = { onConfirm(pendingConfirmation.id) },
+                onCancel = { onCancel(pendingConfirmation.id) },
+            )
         }
 
         // Speaking indicator
@@ -165,6 +180,48 @@ fun TranscriptView(
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+    }
+}
+
+@Composable
+fun PendingConfirmationCard(
+    pendingConfirmation: PendingConfirmation,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(12.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = pendingConfirmation.reason.ifBlank { "Confirm before taking this action." },
+            color = Color.White,
+            fontSize = 13.sp,
+        )
+        if (pendingConfirmation.task.isNotBlank()) {
+            Text(
+                text = pendingConfirmation.task,
+                color = Color.White.copy(alpha = 0.72f),
+                fontSize = 12.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(onClick = onConfirm) {
+                Text(text = "Confirm")
+            }
+            OutlinedButton(onClick = onCancel) {
+                Text(text = "Cancel")
+            }
         }
     }
 }

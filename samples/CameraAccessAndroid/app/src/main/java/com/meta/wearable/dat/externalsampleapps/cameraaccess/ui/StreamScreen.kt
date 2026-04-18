@@ -134,7 +134,11 @@ fun StreamScreen(
             Column(modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 8.dp)) {
                 // Gemini overlay
                 if (geminiUiState.isGeminiActive) {
-                    GeminiOverlay(uiState = geminiUiState)
+                    GeminiOverlay(
+                        uiState = geminiUiState,
+                        onConfirm = geminiViewModel::confirmPendingAction,
+                        onCancel = geminiViewModel::cancelPendingAction,
+                    )
                 }
 
                 // WebRTC overlay

@@ -4,6 +4,7 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiFunc
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorFallbackReason
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 
 data class RoutingResult(
@@ -11,31 +12,62 @@ data class RoutingResult(
     val fallbackReason: String? = null
 )
 
+data class IntentDispatchPlan(
+    val handler: ToolHandler,
+    val fallbackReason: String? = null,
+    val confirmationTier: ConfirmationPolicy.Tier = ConfirmationPolicy.Tier.Implicit
+)
+
 class IntentRouter(
     bridge: OpenClawBridge,
-    private val structuredIntentsEnabledProvider: () -> Boolean = { SettingsManager.structuredIntentsEnabled },
+    private val sessionStateManager: SessionStateManager,
+    private val structuredIntentsEnabledProvider: () -> Boolean = { SettingsManager.structuredIntentsEnabledFlow.value },
     private val genericHandler: ToolHandler = GenericExecuteHandler(bridge),
     private val toolRegistry: ToolRegistry = ToolRegistry(bridge)
 ) {
-    suspend fun route(call: GeminiFunctionCall): RoutingResult {
-        if (!structuredIntentsEnabledProvider()) {
-            return fallback(call, OperatorFallbackReason.KILL_SWITCH, genericHandler.execute(call))
+    fun resolve(call: GeminiFunctionCall): IntentDispatchPlan {
+        if (call.name != "confirm_pending" && !structuredIntentsEnabledProvider()) {
+            return plan(
+                call = call,
+                handler = genericHandler,
+                fallbackReason = OperatorFallbackReason.KILL_SWITCH
+            )
         }
 
         return when (val resolution = toolRegistry.getHandlerResolution(call.name)) {
-            is ToolHandlerResolution.Available -> RoutingResult(result = resolution.handler.execute(call))
+            is ToolHandlerResolution.Available -> plan(call, resolution.handler)
             ToolHandlerResolution.Missing ->
-                fallback(call, OperatorFallbackReason.NO_MATCHING_TOOL, genericHandler.execute(call))
+                plan(
+                    call = call,
+                    handler = genericHandler,
+                    fallbackReason = OperatorFallbackReason.NO_MATCHING_TOOL
+                )
             is ToolHandlerResolution.Unavailable ->
-                fallback(call, OperatorFallbackReason.HANDLER_UNAVAILABLE, genericHandler.execute(call))
+                plan(
+                    call = call,
+                    handler = genericHandler,
+                    fallbackReason = OperatorFallbackReason.HANDLER_UNAVAILABLE
+                )
         }
+    }
+
+    suspend fun route(call: GeminiFunctionCall): RoutingResult {
+        return execute(call, resolve(call))
+    }
+
+    suspend fun execute(call: GeminiFunctionCall, plan: IntentDispatchPlan): RoutingResult {
+        return fallback(call, plan.fallbackReason, plan.handler.execute(call))
     }
 
     private fun fallback(
         call: GeminiFunctionCall,
-        reason: String,
+        reason: String?,
         result: ToolResult
     ): RoutingResult {
+        if (reason == null) {
+            return RoutingResult(result = result)
+        }
+
         val resultWithHint = when (result) {
             is ToolResult.Failure -> {
                 if (result.hint != null) {
@@ -53,6 +85,18 @@ class IntentRouter(
         )
     }
 
+    private fun plan(
+        call: GeminiFunctionCall,
+        handler: ToolHandler,
+        fallbackReason: String? = null
+    ): IntentDispatchPlan {
+        return IntentDispatchPlan(
+            handler = handler,
+            fallbackReason = fallbackReason,
+            confirmationTier = ConfirmationPolicy.evaluate(call, sessionStateManager)
+        )
+    }
+
     private fun fallbackHint(call: GeminiFunctionCall, reason: String): String = when (reason) {
         OperatorFallbackReason.KILL_SWITCH -> when (call.name) {
             "search_web" -> "Structured routing is disabled. Use execute for this lookup or re-enable structured intents."
@@ -62,6 +106,8 @@ class IntentRouter(
             "Use execute for actions and search_web for fact lookups."
         OperatorFallbackReason.HANDLER_UNAVAILABLE ->
             "Retry with execute, or re-enable the unavailable structured tool before trying again."
+        OperatorFallbackReason.CONFIRMATION_REQUIRED ->
+            "Ask the user to confirm the pending action, then call confirm_pending with the pendingActionId."
         else -> "Retry with a supported tool for this request."
     }
 }

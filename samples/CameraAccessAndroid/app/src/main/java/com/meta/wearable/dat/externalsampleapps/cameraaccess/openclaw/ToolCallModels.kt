@@ -112,6 +112,7 @@ object ToolDeclarations {
         return JSONArray().apply {
             put(executeJSON())
             put(searchWebJSON())
+            put(confirmPendingJSON())
         }
     }
 
@@ -150,6 +151,28 @@ object ToolDeclarations {
                     })
                 })
                 put("required", JSONArray().put("query"))
+            })
+            put("behavior", "BLOCKING")
+        }
+    }
+
+    fun confirmPendingJSON(): JSONObject {
+        return JSONObject().apply {
+            put("name", "confirm_pending")
+            put("description", "Use this only after a prior tool response tells you an action is waiting for confirmation. Pass the exact pendingActionId from that response and set confirm=true to proceed or confirm=false to cancel it.")
+            put("parameters", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("pendingActionId", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "The pendingActionId returned by the earlier confirmation-required tool response.")
+                    })
+                    put("confirm", JSONObject().apply {
+                        put("type", "boolean")
+                        put("description", "true to approve the pending action, false to cancel it.")
+                    })
+                })
+                put("required", JSONArray().put("pendingActionId").put("confirm"))
             })
             put("behavior", "BLOCKING")
         }

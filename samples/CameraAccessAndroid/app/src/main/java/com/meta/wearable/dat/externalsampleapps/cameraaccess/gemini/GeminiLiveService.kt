@@ -6,11 +6,16 @@ import android.util.Log
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiToolCall
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiToolCallCancellation
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolDeclarations
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import java.io.ByteArrayOutputStream
 import java.util.Timer
 import java.util.TimerTask
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Future
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,9 +36,10 @@ sealed class GeminiConnectionState {
     data class Error(val message: String) : GeminiConnectionState()
 }
 
-class GeminiLiveService {
+open class GeminiLiveService {
     companion object {
         private const val TAG = "GeminiLiveService"
+        internal const val SEND_TEXT_TIMEOUT_MS = 1_000L
     }
 
     private val _connectionState = MutableStateFlow<GeminiConnectionState>(GeminiConnectionState.Disconnected)
@@ -50,6 +56,7 @@ class GeminiLiveService {
     var onOutputTranscription: ((String) -> Unit)? = null
     var onToolCall: ((GeminiToolCall) -> Unit)? = null
     var onToolCallCancellation: ((GeminiToolCallCancellation) -> Unit)? = null
+    var sessionStateManager: SessionStateManager? = null
 
     // Latency tracking
     private var lastUserSpeechEnd: Long = 0
@@ -59,11 +66,23 @@ class GeminiLiveService {
     private val sendExecutor = Executors.newSingleThreadExecutor()
     private var connectCallback: ((Boolean) -> Unit)? = null
     private var timeoutTimer: Timer? = null
+    private var pendingReconnectVoiceNote: String? = null
 
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(10, TimeUnit.SECONDS)
         .build()
+
+    internal open val sendTextTimeoutMs: Long
+        get() = SEND_TEXT_TIMEOUT_MS
+
+    internal open fun logSendTextError(message: String, throwable: Throwable? = null) {
+        if (throwable == null) {
+            Log.e(TAG, message)
+        } else {
+            Log.e(TAG, message, throwable)
+        }
+    }
 
     fun connect(callback: (Boolean) -> Unit) {
         val url = GeminiConfig.websocketURL()
@@ -95,6 +114,7 @@ class GeminiLiveService {
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val msg = t.message ?: "Unknown error"
                 Log.e(TAG, "WebSocket failure: $msg")
+                invalidatePendingConfirmationsForDisconnect()
                 _connectionState.value = GeminiConnectionState.Error(msg)
                 _isModelSpeaking.value = false
                 resolveConnect(false)
@@ -103,6 +123,7 @@ class GeminiLiveService {
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d(TAG, "WebSocket closing: $code $reason")
+                invalidatePendingConfirmationsForDisconnect()
                 _connectionState.value = GeminiConnectionState.Disconnected
                 _isModelSpeaking.value = false
                 resolveConnect(false)
@@ -111,6 +132,7 @@ class GeminiLiveService {
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d(TAG, "WebSocket closed: $code $reason")
+                invalidatePendingConfirmationsForDisconnect()
                 _connectionState.value = GeminiConnectionState.Disconnected
                 _isModelSpeaking.value = false
             }
@@ -134,6 +156,7 @@ class GeminiLiveService {
     fun disconnect() {
         timeoutTimer?.cancel()
         timeoutTimer = null
+        invalidatePendingConfirmationsForDisconnect()
         webSocket?.close(1000, null)
         webSocket = null
         onToolCall = null
@@ -183,20 +206,39 @@ class GeminiLiveService {
         }
     }
 
-    fun sendTextMessage(text: String) {
-        if (_connectionState.value != GeminiConnectionState.Ready) return
-        sendExecutor.execute {
-            val json = JSONObject().apply {
-                put("clientContent", JSONObject().apply {
-                    put("turns", JSONArray().put(JSONObject().apply {
-                        put("role", "user")
-                        put("parts", JSONArray().put(JSONObject().apply {
-                            put("text", text)
+    open fun sendTextMessage(text: String): Boolean {
+        if (_connectionState.value != GeminiConnectionState.Ready) return false
+        val currentWebSocket = webSocket ?: return false
+        var sendFuture: Future<Boolean>? = null
+        return try {
+            sendFuture = sendExecutor.submit<Boolean> {
+                val json = JSONObject().apply {
+                    put("clientContent", JSONObject().apply {
+                        put("turns", JSONArray().put(JSONObject().apply {
+                            put("role", "user")
+                            put("parts", JSONArray().put(JSONObject().apply {
+                                put("text", text)
+                            }))
                         }))
-                    }))
-                })
+                    })
+                }
+                currentWebSocket.send(json.toString())
             }
-            webSocket?.send(json.toString())
+            sendFuture.get(sendTextTimeoutMs, TimeUnit.MILLISECONDS)
+        } catch (e: RejectedExecutionException) {
+            logSendTextError("Failed to dispatch text message send", e)
+            false
+        } catch (e: TimeoutException) {
+            sendFuture?.cancel(true)
+            logSendTextError("Timed out while sending text message", e)
+            false
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logSendTextError("Interrupted while sending text message", e)
+            false
+        } catch (e: ExecutionException) {
+            logSendTextError("Text message send failed", e.cause ?: e)
+            false
         }
     }
 
@@ -222,7 +264,7 @@ class GeminiLiveService {
                 })
                 put("systemInstruction", JSONObject().apply {
                     put("parts", JSONArray().put(JSONObject().apply {
-                        put("text", GeminiConfig.systemInstruction)
+                        put("text", buildSystemInstruction())
                     }))
                 })
                 put("tools", JSONArray().put(JSONObject().apply {
@@ -252,6 +294,10 @@ class GeminiLiveService {
         webSocket?.send(setup.toString())
     }
 
+    internal open fun buildSystemInstruction(): String {
+        return GeminiConfig.systemInstruction
+    }
+
     private fun handleMessage(text: String) {
         try {
             val json = JSONObject(text)
@@ -259,6 +305,7 @@ class GeminiLiveService {
             // Setup complete
             if (json.has("setupComplete")) {
                 _connectionState.value = GeminiConnectionState.Ready
+                flushReconnectVoiceNoteIfNeeded()
                 resolveConnect(true)
                 return
             }
@@ -267,6 +314,7 @@ class GeminiLiveService {
             if (json.has("goAway")) {
                 val goAway = json.getJSONObject("goAway")
                 val seconds = goAway.optJSONObject("timeLeft")?.optInt("seconds", 0) ?: 0
+                invalidatePendingConfirmationsForDisconnect()
                 _connectionState.value = GeminiConnectionState.Disconnected
                 _isModelSpeaking.value = false
                 onDisconnected?.invoke("Server closing (time left: ${seconds}s)")
@@ -358,6 +406,23 @@ class GeminiLiveService {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing message: ${e.message}")
+        }
+    }
+
+    private fun invalidatePendingConfirmationsForDisconnect() {
+        val manager = sessionStateManager ?: return
+        val hadPendingConfirmation = manager.pendingConfirmation.value != null
+        manager.invalidatePendingConfirmations("disconnect")
+        if (hadPendingConfirmation) {
+            pendingReconnectVoiceNote =
+                "System note: the last pending confirmation was cleared because the connection dropped. Ask for confirmation again before retrying that action."
+        }
+    }
+
+    private fun flushReconnectVoiceNoteIfNeeded() {
+        val note = pendingReconnectVoiceNote ?: return
+        if (sendTextMessage(note)) {
+            pendingReconnectVoiceNote = null
         }
     }
 }

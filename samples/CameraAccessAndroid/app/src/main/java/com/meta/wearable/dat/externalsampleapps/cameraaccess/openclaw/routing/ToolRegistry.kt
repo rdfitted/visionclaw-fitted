@@ -11,6 +11,7 @@ sealed interface ToolHandlerResolution {
 
 class ToolRegistry(
     bridge: OpenClawBridge,
+    confirmPendingHandler: ToolHandler? = null,
     disabledTools: Set<String> = emptySet()
 ) {
     private val handlers = mutableMapOf<String, ToolHandler>()
@@ -19,6 +20,7 @@ class ToolRegistry(
     init {
         register("execute", GenericExecuteHandler(bridge))
         register("search_web", SearchWebHandler(bridge))
+        confirmPendingHandler?.let { register("confirm_pending", it) }
     }
 
     fun register(name: String, handler: ToolHandler) {
