@@ -100,7 +100,8 @@ open class OpenClawBridge {
         }
     }
 
-    fun resetSession() {
+    open fun resetSession() {
+        _toolCallStates.value = emptyMap()
         _conversationHistory.value = emptyList()
         Log.d(TAG, "Session reset (key retained: $sessionKey)")
     }

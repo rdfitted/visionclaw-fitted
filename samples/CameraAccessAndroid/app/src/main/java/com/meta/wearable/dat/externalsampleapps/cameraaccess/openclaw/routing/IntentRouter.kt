@@ -21,7 +21,7 @@ data class IntentDispatchPlan(
 class IntentRouter(
     bridge: OpenClawBridge,
     private val sessionStateManager: SessionStateManager,
-    private val structuredIntentsEnabledProvider: () -> Boolean = { SettingsManager.structuredIntentsEnabled },
+    private val structuredIntentsEnabledProvider: () -> Boolean = { SettingsManager.structuredIntentsEnabledFlow.value },
     private val genericHandler: ToolHandler = GenericExecuteHandler(bridge),
     private val toolRegistry: ToolRegistry = ToolRegistry(bridge)
 ) {

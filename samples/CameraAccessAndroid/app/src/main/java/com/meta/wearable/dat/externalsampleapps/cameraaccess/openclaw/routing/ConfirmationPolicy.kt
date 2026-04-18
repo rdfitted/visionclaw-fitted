@@ -16,7 +16,7 @@ object ConfirmationPolicy {
 
     fun evaluate(intent: GeminiFunctionCall, sessionState: SessionStateManager): Tier {
         val intentType = IntentType.from(intent)
-        return when (SettingsManager.confirmationPolicy) {
+        return when (SettingsManager.confirmationPolicyFlow.value) {
             OperatorConfirmationPolicy.Minimal -> Tier.Implicit
             OperatorConfirmationPolicy.Standard -> intentType.standardTier(sessionState)
             OperatorConfirmationPolicy.AlwaysConfirmOutbound -> intentType.alwaysOutboundTier()

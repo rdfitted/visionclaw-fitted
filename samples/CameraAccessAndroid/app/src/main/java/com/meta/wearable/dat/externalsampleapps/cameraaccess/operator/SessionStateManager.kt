@@ -1,6 +1,8 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.operator
 
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallRouter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,6 +48,7 @@ enum class ToolResultOutcome {
 }
 
 class SessionStateManager(
+    private val bridge: OpenClawBridge,
     private val nowProvider: () -> Long = System::currentTimeMillis
 ) {
     companion object {
@@ -90,6 +93,9 @@ class SessionStateManager(
     }
 
     private var currentSessionKey: String? = null
+    private var toolCallRouter: ToolCallRouter? = null
+
+    val conversationHistory = bridge.conversationHistory
 
     private val _objective = MutableStateFlow<String?>(null)
     val objective: StateFlow<String?> = _objective.asStateFlow()
@@ -103,8 +109,14 @@ class SessionStateManager(
     private val _recentToolResults = MutableStateFlow<List<ToolResultSummary>>(emptyList())
     val recentToolResults: StateFlow<List<ToolResultSummary>> = _recentToolResults.asStateFlow()
 
+    fun setToolCallRouter(router: ToolCallRouter?) {
+        toolCallRouter = router
+    }
+
     fun reset(sessionKey: String) {
         currentSessionKey = sessionKey
+        toolCallRouter?.cancelAll()
+        bridge.resetSession()
         _objective.value = null
         _recentEntities.value = emptyList()
         _pendingConfirmation.value = null

@@ -16,6 +16,9 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -34,8 +37,15 @@ class ToolCallRouter(
     private val inFlightJobs = mutableMapOf<String, Job>()
     private val pendingActions = mutableMapOf<String, PendingAction>()
     private val pendingTimeouts = mutableMapOf<String, Job>()
-    private var operatorState = OperatorStateMachine.State()
+    private val _operatorState = MutableStateFlow(OperatorStateMachine.State())
+    val operatorState: StateFlow<OperatorStateMachine.State> = _operatorState.asStateFlow()
     private val turnCounter = AtomicLong(0)
+
+    private var machineState: OperatorStateMachine.State
+        get() = _operatorState.value
+        set(value) {
+            _operatorState.value = value
+        }
 
     private val pendingConfirmationController = object : PendingConfirmationController {
         override suspend fun confirmPending(pendingActionId: String): ToolResult {
@@ -49,8 +59,8 @@ class ToolCallRouter(
                 pendingTimeouts.remove(pendingActionId)?.cancel()
                 pendingActions.remove(pendingActionId)
                 sessionStateManager.clearPendingConfirmation()
-                operatorState = OperatorStateMachine.confirm(operatorState, pendingActionId)
-                operatorState = OperatorStateMachine.dispatch(operatorState, pendingActionId)
+                machineState = OperatorStateMachine.confirm(machineState, pendingActionId)
+                machineState = OperatorStateMachine.dispatch(machineState, pendingActionId)
                 storedAction
             } ?: return ToolResult.Success("No pending action matched that confirmation request.")
 
@@ -111,8 +121,8 @@ class ToolCallRouter(
 
         if (taskDesc.isBlank()) {
             synchronized(stateLock) {
-                operatorState = OperatorStateMachine.invalidateNew(
-                    state = operatorState,
+                machineState = OperatorStateMachine.invalidateNew(
+                    state = machineState,
                     context = context,
                     toolName = callName,
                     reason = "missing_task_payload"
@@ -137,22 +147,22 @@ class ToolCallRouter(
         }
 
         val dispatchDecision = synchronized(stateLock) {
-            operatorState = OperatorStateMachine.propose(
-                state = operatorState,
+            machineState = OperatorStateMachine.propose(
+                state = machineState,
                 context = context,
                 toolName = callName,
                 task = taskDesc
             )
-            operatorState = OperatorStateMachine.validate(operatorState, callId)
+            machineState = OperatorStateMachine.validate(machineState, callId)
             val intentPlan = intentRouter.resolve(call)
 
-            if (operatorState.circuitBreakerOpen) {
-                operatorState = OperatorStateMachine.reject(
-                    state = operatorState,
+            if (machineState.circuitBreakerOpen) {
+                machineState = OperatorStateMachine.reject(
+                    state = machineState,
                     id = callId,
                     reason = "circuit_breaker_open"
                 )
-                val failureCount = operatorState.consecutiveFailures
+                val failureCount = machineState.consecutiveFailures
                 DispatchDecision.Rejected(
                     ToolResult.Failure(
                         error = "Tool execution is temporarily unavailable after $failureCount consecutive failures. " +
@@ -164,9 +174,9 @@ class ToolCallRouter(
                 when (val tier = intentPlan.confirmationTier) {
                     is ConfirmationPolicy.Tier.AlwaysConfirm -> {
                         val prompt = "Confirm before taking this action."
-                        operatorState = OperatorStateMachine.awaitConfirmation(operatorState, callId, prompt)
-                        operatorState = OperatorStateMachine.fallback(
-                            state = operatorState,
+                        machineState = OperatorStateMachine.awaitConfirmation(machineState, callId, prompt)
+                        machineState = OperatorStateMachine.fallback(
+                            state = machineState,
                             id = callId,
                             reason = OperatorFallbackReason.CONFIRMATION_REQUIRED
                         )
@@ -175,9 +185,9 @@ class ToolCallRouter(
                     }
 
                     is ConfirmationPolicy.Tier.ConditionalConfirm -> {
-                        operatorState = OperatorStateMachine.awaitConfirmation(operatorState, callId, tier.prompt)
-                        operatorState = OperatorStateMachine.fallback(
-                            state = operatorState,
+                        machineState = OperatorStateMachine.awaitConfirmation(machineState, callId, tier.prompt)
+                        machineState = OperatorStateMachine.fallback(
+                            state = machineState,
                             id = callId,
                             reason = OperatorFallbackReason.CONFIRMATION_REQUIRED
                         )
@@ -186,7 +196,7 @@ class ToolCallRouter(
                     }
 
                     ConfirmationPolicy.Tier.Implicit -> {
-                        operatorState = OperatorStateMachine.dispatch(operatorState, callId)
+                        machineState = OperatorStateMachine.dispatch(machineState, callId)
                         DispatchDecision.Dispatch(intentPlan)
                     }
                 }
@@ -254,8 +264,8 @@ class ToolCallRouter(
                     sessionStateManager.clearPendingConfirmation()
                 }
 
-                val toolName = operatorState.calls[id]?.toolName ?: pendingAction?.call?.name ?: id
-                operatorState = OperatorStateMachine.cancel(operatorState, id, "cancelled_by_gemini")
+                val toolName = machineState.calls[id]?.toolName ?: pendingAction?.call?.name ?: id
+                machineState = OperatorStateMachine.cancel(machineState, id, "cancelled_by_gemini")
                 CancellationTarget(id = id, job = job, toolName = toolName)
             }
 
@@ -271,17 +281,17 @@ class ToolCallRouter(
             val targets = mutableListOf<CancellationTarget>()
 
             inFlightJobs.forEach { (id, job) ->
-                val toolName = operatorState.calls[id]?.toolName ?: id
-                operatorState = OperatorStateMachine.cancel(operatorState, id, "cancelled_during_shutdown")
+                val toolName = machineState.calls[id]?.toolName ?: id
+                machineState = OperatorStateMachine.cancel(machineState, id, "cancelled_during_shutdown")
                 targets += CancellationTarget(id = id, job = job, toolName = toolName)
             }
 
-            operatorState.calls.values
+            machineState.calls.values
                 .filterIsInstance<OperatorStateMachine.OperatorState.AwaitingConfirmation>()
                 .forEach { awaiting ->
                     if (targets.none { it.id == awaiting.id }) {
-                        operatorState = OperatorStateMachine.cancel(
-                            operatorState,
+                        machineState = OperatorStateMachine.cancel(
+                            machineState,
                             awaiting.id,
                             "cancelled_during_shutdown"
                         )
@@ -298,7 +308,7 @@ class ToolCallRouter(
             pendingTimeouts.values.forEach { it.cancel() }
             pendingTimeouts.clear()
             sessionStateManager.clearPendingConfirmation()
-            operatorState = OperatorStateMachine.State()
+            machineState = OperatorStateMachine.State()
             targets
         }
 
@@ -330,8 +340,8 @@ class ToolCallRouter(
 
             synchronized(stateLock) {
                 routingResult.fallbackReason?.let { reason ->
-                    operatorState = OperatorStateMachine.fallback(
-                        state = operatorState,
+                    machineState = OperatorStateMachine.fallback(
+                        state = machineState,
                         id = callId,
                         reason = reason
                     )
@@ -339,11 +349,11 @@ class ToolCallRouter(
 
                 when (result) {
                     is ToolResult.Success -> {
-                        operatorState = OperatorStateMachine.complete(operatorState, callId, result.result)
+                        machineState = OperatorStateMachine.complete(machineState, callId, result.result)
                     }
 
                     is ToolResult.Failure -> {
-                        operatorState = OperatorStateMachine.fail(operatorState, callId, result.error)
+                        machineState = OperatorStateMachine.fail(machineState, callId, result.error)
                         bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, result.error))
                     }
                 }
@@ -357,7 +367,7 @@ class ToolCallRouter(
             val error = e.message ?: "Unhandled routing failure"
             val failure = ToolResult.Failure(error)
             synchronized(stateLock) {
-                operatorState = OperatorStateMachine.fail(operatorState, callId, error)
+                machineState = OperatorStateMachine.fail(machineState, callId, error)
             }
             bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, error))
             sessionStateManager.recordToolResult(callName, failure)
@@ -407,7 +417,7 @@ class ToolCallRouter(
         pendingTimeouts.remove(pendingActionId)?.cancel()
         pendingActions.remove(pendingActionId)
         sessionStateManager.clearPendingConfirmation()
-        operatorState = OperatorStateMachine.cancel(operatorState, pendingActionId, reason)
+        machineState = OperatorStateMachine.cancel(machineState, pendingActionId, reason)
         return pendingAction
     }
 
@@ -418,7 +428,7 @@ class ToolCallRouter(
         pendingTimeouts.remove(pending.id)?.cancel()
         pendingActions.remove(pending.id)
         sessionStateManager.invalidatePendingConfirmations(reason)
-        operatorState = OperatorStateMachine.invalidate(operatorState, pending.id, reason)
+        machineState = OperatorStateMachine.invalidate(machineState, pending.id, reason)
         return pendingAction
     }
 
