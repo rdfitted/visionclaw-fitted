@@ -4,6 +4,7 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorCo
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorStateMachine
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -89,7 +90,7 @@ class ToolCallRouter(
             return
         }
 
-        val job = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             val routingResult = intentRouter.route(call)
             val result = routingResult.result
 
@@ -131,6 +132,7 @@ class ToolCallRouter(
         synchronized(stateLock) {
             inFlightJobs[callId] = job
         }
+        job.start()
     }
 
     fun cancelToolCalls(ids: List<String>) {

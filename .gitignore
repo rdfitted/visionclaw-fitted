@@ -8,4 +8,9 @@ samples/CameraAccessAndroid/build/
 samples/CameraAccessAndroid/app/build/
 
 # Claude Code local settings
+.claude/
 .claude/settings.local.json
+.hive-manager/
+AGENTS.md
+PLANNING DOCS/
+logs/
