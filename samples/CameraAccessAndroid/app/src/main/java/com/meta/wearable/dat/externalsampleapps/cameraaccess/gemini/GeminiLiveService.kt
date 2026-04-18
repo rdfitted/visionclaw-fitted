@@ -10,7 +10,9 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionSta
 import java.io.ByteArrayOutputStream
 import java.util.Timer
 import java.util.TimerTask
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -193,20 +195,31 @@ open class GeminiLiveService {
     open fun sendTextMessage(text: String): Boolean {
         if (_connectionState.value != GeminiConnectionState.Ready) return false
         val currentWebSocket = webSocket ?: return false
-        sendExecutor.execute {
-            val json = JSONObject().apply {
-                put("clientContent", JSONObject().apply {
-                    put("turns", JSONArray().put(JSONObject().apply {
-                        put("role", "user")
-                        put("parts", JSONArray().put(JSONObject().apply {
-                            put("text", text)
+        return try {
+            sendExecutor.submit<Boolean> {
+                val json = JSONObject().apply {
+                    put("clientContent", JSONObject().apply {
+                        put("turns", JSONArray().put(JSONObject().apply {
+                            put("role", "user")
+                            put("parts", JSONArray().put(JSONObject().apply {
+                                put("text", text)
+                            }))
                         }))
-                    }))
-                })
-            }
-            currentWebSocket.send(json.toString())
+                    })
+                }
+                currentWebSocket.send(json.toString())
+            }.get()
+        } catch (e: RejectedExecutionException) {
+            Log.e(TAG, "Failed to dispatch text message send", e)
+            false
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Log.e(TAG, "Interrupted while sending text message", e)
+            false
+        } catch (e: ExecutionException) {
+            Log.e(TAG, "Text message send failed", e.cause ?: e)
+            false
         }
-        return true
     }
 
     // Private
@@ -388,7 +401,8 @@ open class GeminiLiveService {
 
     private fun flushReconnectVoiceNoteIfNeeded() {
         val note = pendingReconnectVoiceNote ?: return
-        pendingReconnectVoiceNote = null
-        sendTextMessage(note)
+        if (sendTextMessage(note)) {
+            pendingReconnectVoiceNote = null
+        }
     }
 }
