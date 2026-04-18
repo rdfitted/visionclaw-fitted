@@ -19,14 +19,17 @@ class SessionContextRefreshTracker(
             return
         }
 
-        lastSentContextHash = contextHash
         if (sessionContext.isBlank()) {
+            lastSentContextHash = contextHash
             return
         }
 
-        geminiLiveService.sendTextMessage(
+        val didQueueRefresh = geminiLiveService.sendTextMessage(
             "System note for future turns only. Do not acknowledge this out loud. " +
                 "Refresh your rolling session context with the latest state.\n$sessionContext"
         )
+        if (didQueueRefresh) {
+            lastSentContextHash = contextHash
+        }
     }
 }

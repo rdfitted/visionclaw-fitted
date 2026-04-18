@@ -131,6 +131,28 @@ class SessionStateManagerTest {
     }
 
     @Test
+    fun sessionContextRefreshTrackerDoesNotAdvanceHashUntilRefreshIsQueued() {
+        val manager = SessionStateManager(TestBridge())
+        val geminiService = RecordingGeminiLiveService(canSendMessages = false)
+        val refreshTracker = SessionContextRefreshTracker(manager, geminiService)
+
+        manager.reset("session-1")
+        refreshTracker.markCurrentContextSent()
+
+        manager.updateObjective("Send the launch update")
+        val refreshedContext = manager.sessionContextBlock()
+
+        refreshTracker.sendRefreshIfChanged()
+        assertTrue(geminiService.messages.isEmpty())
+
+        geminiService.canSendMessages = true
+        refreshTracker.sendRefreshIfChanged()
+
+        assertEquals(1, geminiService.messages.size)
+        assertTrue(geminiService.messages.first().contains(refreshedContext))
+    }
+
+    @Test
     fun conversationHistoryPassthroughUsesBridgeFlow() {
         val bridge = OpenClawBridge()
         val manager = SessionStateManager(bridge)
@@ -153,11 +175,17 @@ class SessionStateManagerTest {
         }
     }
 
-    private class RecordingGeminiLiveService : GeminiLiveService() {
+    private class RecordingGeminiLiveService(
+        var canSendMessages: Boolean = true
+    ) : GeminiLiveService() {
         val messages = mutableListOf<String>()
 
-        override fun sendTextMessage(text: String) {
+        override fun sendTextMessage(text: String): Boolean {
+            if (!canSendMessages) {
+                return false
+            }
             messages += text
+            return true
         }
     }
 }

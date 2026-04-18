@@ -190,8 +190,9 @@ open class GeminiLiveService {
         }
     }
 
-    open fun sendTextMessage(text: String) {
-        if (_connectionState.value != GeminiConnectionState.Ready) return
+    open fun sendTextMessage(text: String): Boolean {
+        if (_connectionState.value != GeminiConnectionState.Ready) return false
+        val currentWebSocket = webSocket ?: return false
         sendExecutor.execute {
             val json = JSONObject().apply {
                 put("clientContent", JSONObject().apply {
@@ -203,8 +204,9 @@ open class GeminiLiveService {
                     }))
                 })
             }
-            webSocket?.send(json.toString())
+            currentWebSocket.send(json.toString())
         }
+        return true
     }
 
     // Private
