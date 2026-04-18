@@ -190,7 +190,7 @@ open class GeminiLiveService {
         }
     }
 
-    fun sendTextMessage(text: String) {
+    open fun sendTextMessage(text: String) {
         if (_connectionState.value != GeminiConnectionState.Ready) return
         sendExecutor.execute {
             val json = JSONObject().apply {

@@ -1,5 +1,6 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.operator
 
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.gemini.GeminiLiveService
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
 import kotlin.test.Test
@@ -68,7 +69,7 @@ class SessionStateManagerTest {
     }
 
     @Test
-    fun resetWipesObjectiveEntitiesPendingAndToolResults() {
+    fun resetOnDisconnectClearsObjectiveEntitiesPendingAndToolResults() {
         val manager = SessionStateManager(TestBridge())
 
         manager.reset("session-1")
@@ -83,6 +84,50 @@ class SessionStateManagerTest {
         assertTrue(manager.recentEntities.value.isEmpty())
         assertNull(manager.pendingConfirmation.value)
         assertTrue(manager.recentToolResults.value.isEmpty())
+        assertEquals("", manager.sessionContextBlock())
+    }
+
+    @Test
+    fun sessionContextBlockIsDeterministicForStableState() {
+        val clock = TestClock()
+        val manager = SessionStateManager(TestBridge(), nowProvider = clock::now)
+
+        manager.reset("session-1")
+        manager.updateObjective("Send the launch update")
+        manager.observeText("sam@example.com")
+        manager.recordToolResult("execute", ToolResult.Success("Sent successfully"))
+
+        val first = manager.sessionContextBlock()
+        val second = manager.sessionContextBlock()
+
+        assertEquals(first, second)
+        assertTrue(first.startsWith("Session context:\nObjective: Send the launch update"))
+        assertTrue(first.contains("Recent entities:"))
+        assertTrue(first.contains("Recent tool results: execute:ok:Sent successfully"))
+    }
+
+    @Test
+    fun sessionContextRefreshTrackerResendsUpdatedContextAfterStateChange() {
+        val manager = SessionStateManager(TestBridge())
+        val geminiService = RecordingGeminiLiveService()
+        val refreshTracker = SessionContextRefreshTracker(manager, geminiService)
+
+        manager.reset("session-1")
+        refreshTracker.markCurrentContextSent()
+
+        manager.updateObjective("Send the launch update")
+        val refreshedContext = manager.sessionContextBlock()
+        refreshTracker.sendRefreshIfChanged()
+
+        assertEquals(1, geminiService.messages.size)
+        assertTrue(geminiService.messages.first().contains(refreshedContext))
+
+        refreshTracker.sendRefreshIfChanged()
+        assertEquals(1, geminiService.messages.size)
+
+        manager.recordToolResult("execute", ToolResult.Success("Sent successfully"))
+        refreshTracker.sendRefreshIfChanged()
+        assertEquals(2, geminiService.messages.size)
     }
 
     @Test
@@ -105,6 +150,14 @@ class SessionStateManagerTest {
 
     private class TestBridge : OpenClawBridge() {
         override fun resetSession() {
+        }
+    }
+
+    private class RecordingGeminiLiveService : GeminiLiveService() {
+        val messages = mutableListOf<String>()
+
+        override fun sendTextMessage(text: String) {
+            messages += text
         }
     }
 }
