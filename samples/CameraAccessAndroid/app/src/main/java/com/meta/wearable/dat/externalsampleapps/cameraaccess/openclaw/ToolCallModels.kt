@@ -60,11 +60,17 @@ data class GeminiToolCallCancellation(
 
 sealed class ToolResult {
     data class Success(val result: String) : ToolResult()
-    data class Failure(val error: String) : ToolResult()
+    data class Failure(
+        val error: String,
+        val hint: String? = null
+    ) : ToolResult()
 
     fun toJSON(): JSONObject = when (this) {
         is Success -> JSONObject().put("result", result)
-        is Failure -> JSONObject().put("error", error)
+        is Failure -> JSONObject().apply {
+            put("error", error)
+            hint?.let { put("hint", it) }
+        }
     }
 }
 
@@ -103,13 +109,16 @@ sealed class OpenClawConnectionState {
 
 object ToolDeclarations {
     fun allDeclarationsJSON(): JSONArray {
-        return JSONArray().put(executeJSON())
+        return JSONArray().apply {
+            put(executeJSON())
+            put(searchWebJSON())
+        }
     }
 
     private fun executeJSON(): JSONObject {
         return JSONObject().apply {
             put("name", "execute")
-            put("description", "Your only way to take action. You have no memory, storage, or ability to do anything on your own -- use this tool for everything: sending messages, searching the web, adding to lists, setting reminders, creating notes, research, drafts, scheduling, smart home control, app interactions, or any request that goes beyond answering a question. When in doubt, use this tool.")
+            put("description", "Your way to take action for complex tasks. Use this tool for: sending messages, adding to lists, setting reminders, creating notes, drafts, scheduling, smart home control, app interactions, or any request that requires multi-step logic or specific app integrations. DO NOT use this for simple fact-finding or general web searches.")
             put("parameters", JSONObject().apply {
                 put("type", "object")
                 put("properties", JSONObject().apply {
@@ -119,6 +128,28 @@ object ToolDeclarations {
                     })
                 })
                 put("required", JSONArray().put("task"))
+            })
+            put("behavior", "BLOCKING")
+        }
+    }
+
+    private fun searchWebJSON(): JSONObject {
+        return JSONObject().apply {
+            put("name", "search_web")
+            put("description", "The primary tool for fact-finding, research, and general information retrieval. Use this whenever you need to look something up on the web, verify a fact, or gather information about the world. Use execute only for actions that change the world or require app integrations.")
+            put("parameters", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("query", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "The search query to look up. Be specific for better results.")
+                    })
+                    put("hint", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Optional hint field used on rejection to explain why a specific search was requested.")
+                    })
+                })
+                put("required", JSONArray().put("query"))
             })
             put("behavior", "BLOCKING")
         }

@@ -3,14 +3,46 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.settings
 import android.content.Context
 import android.content.SharedPreferences
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.Secrets
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 object SettingsManager {
     private const val PREFS_NAME = "visionclaw_settings"
+    private const val KEY_RESPONSE_MODE = "responseMode"
+    private const val KEY_CONFIRMATION_POLICY = "confirmationPolicy"
+    private const val KEY_STRUCTURED_INTENTS_ENABLED = "structuredIntentsEnabled"
 
     private lateinit var prefs: SharedPreferences
+    private var preferenceChangeListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    private val _responseMode = MutableStateFlow(ResponseMode.NATURAL)
+    val responseModeFlow: StateFlow<ResponseMode> = _responseMode.asStateFlow()
+
+    private val _confirmationPolicy = MutableStateFlow(ConfirmationPolicy.NEVER)
+    val confirmationPolicyFlow: StateFlow<ConfirmationPolicy> = _confirmationPolicy.asStateFlow()
+
+    private val _structuredIntentsEnabled = MutableStateFlow(false)
+    val structuredIntentsEnabledFlow: StateFlow<Boolean> = _structuredIntentsEnabled.asStateFlow()
 
     fun init(context: Context) {
+        if (::prefs.isInitialized) {
+            preferenceChangeListener?.let(prefs::unregisterOnSharedPreferenceChangeListener)
+        }
+
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        refreshOperatorSettingsFlows()
+
+        preferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            when (key) {
+                null,
+                KEY_RESPONSE_MODE,
+                KEY_CONFIRMATION_POLICY,
+                KEY_STRUCTURED_INTENTS_ENABLED -> refreshOperatorSettingsFlows()
+            }
+        }
+
+        preferenceChangeListener?.let(prefs::registerOnSharedPreferenceChangeListener)
     }
 
     var geminiAPIKey: String
@@ -52,8 +84,27 @@ object SettingsManager {
         get() = prefs.getBoolean("proactiveNotificationsEnabled", true)
         set(value) = prefs.edit().putBoolean("proactiveNotificationsEnabled", value).apply()
 
+    var responseMode: ResponseMode
+        get() = ResponseMode.fromStorageValue(prefs.getString(KEY_RESPONSE_MODE, null))
+        set(value) = prefs.edit().putString(KEY_RESPONSE_MODE, value.storageValue).apply()
+
+    var confirmationPolicy: ConfirmationPolicy
+        get() = ConfirmationPolicy.fromStorageValue(prefs.getString(KEY_CONFIRMATION_POLICY, null))
+        set(value) = prefs.edit().putString(KEY_CONFIRMATION_POLICY, value.storageValue).apply()
+
+    var structuredIntentsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_STRUCTURED_INTENTS_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_STRUCTURED_INTENTS_ENABLED, value).apply()
+
     fun resetAll() {
         prefs.edit().clear().apply()
+        refreshOperatorSettingsFlows()
+    }
+
+    private fun refreshOperatorSettingsFlows() {
+        _responseMode.value = responseMode
+        _confirmationPolicy.value = confirmationPolicy
+        _structuredIntentsEnabled.value = structuredIntentsEnabled
     }
 
     const val DEFAULT_SYSTEM_PROMPT = """You are Hex, Ryan's embedded AI operator.
@@ -70,6 +121,11 @@ Core behavior:
 - Do not sound robotic, corporate, theatrical, or overly assistant-like.
 - Do not over-explain unless asked.
 - When you need to use tools, do it efficiently and then continue naturally.
+
+Tool selection strategy:
+- Use search_web for: fact-finding, checking news/weather, general knowledge, or any query that is primarily about information retrieval.
+- Use execute for: any action that modifies the world (sending messages, creating notes, smart home control) or complex multi-step tasks.
+- If a user asks a question, prefer search_web. If a user asks you to "do" something, prefer execute.
 
 Style:
 - Conversational, grounded, and confident.
@@ -107,9 +163,11 @@ You are not a cartoon character, not a hype machine, and not a therapist. You ar
 
 Operational constraints (don't narrate these, just follow them):
 
-You have no memory, storage, or independent action outside the execute tool. You cannot remember anything between sessions, search the web, send messages, or touch any system on your own. Route anything actionable through execute. Never pretend to do these things yourself.
+You have no memory, storage, or independent action outside the available tools. You cannot remember anything between sessions, search the web, send messages, or touch any system on your own. Route factual lookups through search_web and actionable tasks through execute. Never pretend to do these things yourself.
 
-Use execute for: sending messages on any platform, web search and lookups, adding or modifying lists/reminders/notes/todos/events, research or drafting, controlling apps or smart home devices, anything Ryan asks you to remember or do later.
+Use search_web for: web search, fact checks, current events, weather, and general lookups.
+
+Use execute for: sending messages on any platform, adding or modifying lists/reminders/notes/todos/events, research or drafting that requires taking action, controlling apps or smart home devices, anything Ryan asks you to remember or do later.
 
 When writing the task string for execute, include full context: names, platforms, content, quantities, timing. OpenClaw executes better with complete information.
 

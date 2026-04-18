@@ -15,16 +15,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +40,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.ConfirmationPolicy
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.ResponseMode
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -42,6 +50,10 @@ fun SettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val responseModeFlow by SettingsManager.responseModeFlow.collectAsState()
+    val confirmationPolicyFlow by SettingsManager.confirmationPolicyFlow.collectAsState()
+    val structuredIntentsEnabledFlow by SettingsManager.structuredIntentsEnabledFlow.collectAsState()
+
     var geminiAPIKey by remember { mutableStateOf(SettingsManager.geminiAPIKey) }
     var systemPrompt by remember { mutableStateOf(SettingsManager.geminiSystemPrompt) }
     var openClawHost by remember { mutableStateOf(SettingsManager.openClawHost) }
@@ -51,6 +63,11 @@ fun SettingsScreen(
     var webrtcSignalingURL by remember { mutableStateOf(SettingsManager.webrtcSignalingURL) }
     var videoStreamingEnabled by remember { mutableStateOf(SettingsManager.videoStreamingEnabled) }
     var proactiveNotificationsEnabled by remember { mutableStateOf(SettingsManager.proactiveNotificationsEnabled) }
+    
+    var responseMode by remember(responseModeFlow) { mutableStateOf(responseModeFlow) }
+    var confirmationPolicy by remember(confirmationPolicyFlow) { mutableStateOf(confirmationPolicyFlow) }
+    var structuredIntentsEnabled by remember(structuredIntentsEnabledFlow) { mutableStateOf(structuredIntentsEnabledFlow) }
+
     var showResetDialog by remember { mutableStateOf(false) }
 
     fun save() {
@@ -63,6 +80,9 @@ fun SettingsScreen(
         SettingsManager.webrtcSignalingURL = webrtcSignalingURL.trim()
         SettingsManager.videoStreamingEnabled = videoStreamingEnabled
         SettingsManager.proactiveNotificationsEnabled = proactiveNotificationsEnabled
+        SettingsManager.responseMode = responseMode
+        SettingsManager.confirmationPolicy = confirmationPolicy
+        SettingsManager.structuredIntentsEnabled = structuredIntentsEnabled
     }
 
     fun reload() {
@@ -75,6 +95,9 @@ fun SettingsScreen(
         webrtcSignalingURL = SettingsManager.webrtcSignalingURL
         videoStreamingEnabled = SettingsManager.videoStreamingEnabled
         proactiveNotificationsEnabled = SettingsManager.proactiveNotificationsEnabled
+        responseMode = SettingsManager.responseMode
+        confirmationPolicy = SettingsManager.confirmationPolicy
+        structuredIntentsEnabled = SettingsManager.structuredIntentsEnabled
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -98,6 +121,81 @@ fun SettingsScreen(
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            // Operator Section
+            SectionHeader("Operator")
+            
+            // Response Mode (Radio)
+            Text("Response Mode", style = MaterialTheme.typography.bodyLarge)
+            ResponseMode.entries.forEach { mode ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = responseMode == mode,
+                        onClick = { responseMode = mode }
+                    )
+                    Text(
+                        text = mode.name.lowercase().replaceFirstChar { it.uppercase() },
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
+            }
+
+            // Confirmation Policy (Picker)
+            var expanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = !expanded },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = confirmationPolicy.name.lowercase().replaceFirstChar { it.uppercase() }.replace("_", " "),
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Confirmation Policy") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth()
+                )
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    ConfirmationPolicy.entries.forEach { policy ->
+                        DropdownMenuItem(
+                            text = { Text(policy.name.lowercase().replaceFirstChar { it.uppercase() }.replace("_", " ")) },
+                            onClick = {
+                                confirmationPolicy = policy
+                                expanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Structured Intents (Switch)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Structured Intents", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Enable advanced tool routing. If disabled, all tasks use generic execution.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = structuredIntentsEnabled,
+                    onCheckedChange = { structuredIntentsEnabled = it },
+                )
+            }
+
+            HorizontalDivider()
+
             // Gemini section
             SectionHeader("Gemini API")
             MonoTextField(

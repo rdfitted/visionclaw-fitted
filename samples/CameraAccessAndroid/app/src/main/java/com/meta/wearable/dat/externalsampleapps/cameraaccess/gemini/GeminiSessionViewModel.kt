@@ -6,10 +6,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawEventClient
-import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawConnectionState
-import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallRouter
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallStatus
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallRouter
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.stream.StreamingMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -40,11 +40,11 @@ class GeminiSessionViewModel : ViewModel() {
 
     private val geminiService = GeminiLiveService()
     private val openClawBridge = OpenClawBridge()
-    private var toolCallRouter: ToolCallRouter? = null
     private val audioManager = AudioManager()
     private val eventClient = OpenClawEventClient()
     private var lastVideoFrameTime: Long = 0
     private var stateObservationJob: Job? = null
+    private var toolCallRouter: ToolCallRouter? = null
 
     var streamingMode: StreamingMode = StreamingMode.GLASSES
 
@@ -105,14 +105,14 @@ class GeminiSessionViewModel : ViewModel() {
         viewModelScope.launch {
             openClawBridge.checkConnection()
             openClawBridge.resetSession()
-
-            // Wire tool call handling
             toolCallRouter = ToolCallRouter(openClawBridge, viewModelScope)
 
             geminiService.onToolCall = { toolCall ->
-                for (call in toolCall.functionCalls) {
-                    toolCallRouter?.handleToolCall(call) { response ->
-                        geminiService.sendToolResponse(response)
+                viewModelScope.launch {
+                    for (call in toolCall.functionCalls) {
+                        toolCallRouter?.dispatch(call) { response ->
+                            geminiService.sendToolResponse(response)
+                        }
                     }
                 }
             }
@@ -206,7 +206,8 @@ class GeminiSessionViewModel : ViewModel() {
     }
 
     override fun onCleared() {
-        super.onCleared()
         stopSession()
+        openClawBridge.shutdown()
+        super.onCleared()
     }
 }
