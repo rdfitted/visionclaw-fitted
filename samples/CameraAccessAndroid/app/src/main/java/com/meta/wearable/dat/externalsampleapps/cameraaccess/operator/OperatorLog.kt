@@ -28,6 +28,7 @@ object OperatorFallbackReason {
     const val NO_MATCHING_TOOL = "no_matching_tool"
     const val HANDLER_UNAVAILABLE = "handler_unavailable"
     const val KILL_SWITCH = "kill_switch"
+    const val CONFIRMATION_REQUIRED = "confirmation_required"
 }
 
 object OperatorLog {

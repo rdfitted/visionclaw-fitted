@@ -1,9 +1,11 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw
 
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorContext
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorFallbackReason
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.OperatorStateMachine
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ConfirmationPolicy
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentDispatchPlan
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -18,7 +20,7 @@ class ToolCallRouter(
     private val bridge: OpenClawBridge,
     private val scope: CoroutineScope,
     private val sessionStateManager: SessionStateManager,
-    private val intentRouter: IntentRouter = IntentRouter(bridge)
+    private val intentRouter: IntentRouter = IntentRouter(bridge, sessionStateManager)
 ) {
     private val stateLock = Any()
     private val inFlightJobs = mutableMapOf<String, Job>()
@@ -74,6 +76,7 @@ class ToolCallRouter(
                 task = taskDesc
             )
             operatorState = OperatorStateMachine.validate(operatorState, callId)
+            val intentPlan = intentRouter.resolve(call)
 
             if (operatorState.circuitBreakerOpen) {
                 operatorState = OperatorStateMachine.reject(
@@ -90,10 +93,15 @@ class ToolCallRouter(
                     )
                 )
             } else {
-                when (val tier = ConfirmationPolicy.evaluate(call, sessionStateManager)) {
+                when (val tier = intentPlan.confirmationTier) {
                     is ConfirmationPolicy.Tier.AlwaysConfirm -> {
                         val prompt = "Confirm before taking this action."
                         operatorState = OperatorStateMachine.awaitConfirmation(operatorState, callId, prompt)
+                        operatorState = OperatorStateMachine.fallback(
+                            state = operatorState,
+                            id = callId,
+                            reason = OperatorFallbackReason.CONFIRMATION_REQUIRED
+                        )
                         sessionStateManager.setPendingConfirmation(callId, callName, taskDesc, prompt)
                         DispatchDecision.AwaitingConfirmation(
                             ToolResult.Success(
@@ -104,6 +112,11 @@ class ToolCallRouter(
 
                     is ConfirmationPolicy.Tier.ConditionalConfirm -> {
                         operatorState = OperatorStateMachine.awaitConfirmation(operatorState, callId, tier.prompt)
+                        operatorState = OperatorStateMachine.fallback(
+                            state = operatorState,
+                            id = callId,
+                            reason = OperatorFallbackReason.CONFIRMATION_REQUIRED
+                        )
                         sessionStateManager.setPendingConfirmation(callId, callName, taskDesc, tier.prompt)
                         DispatchDecision.AwaitingConfirmation(
                             ToolResult.Success(
@@ -117,13 +130,13 @@ class ToolCallRouter(
 
                     ConfirmationPolicy.Tier.Implicit -> {
                         operatorState = OperatorStateMachine.dispatch(operatorState, callId)
-                        DispatchDecision.Dispatch
+                        DispatchDecision.Dispatch(intentPlan)
                     }
                 }
             }
         }
 
-        when (dispatchDecision) {
+        val intentPlan = when (dispatchDecision) {
             is DispatchDecision.Rejected -> {
                 bridge.setToolCallState(callId, ToolCallStatus.Failed(callName, "Circuit breaker open"))
                 sessionStateManager.recordToolResult(callName, dispatchDecision.result)
@@ -136,13 +149,13 @@ class ToolCallRouter(
                 return
             }
 
-            DispatchDecision.Dispatch -> Unit
+            is DispatchDecision.Dispatch -> dispatchDecision.intentPlan
         }
 
         val job = scope.launch(start = CoroutineStart.LAZY) {
             var response: JSONObject? = null
             try {
-                val routingResult = intentRouter.route(call)
+                val routingResult = intentRouter.execute(call, intentPlan)
                 val result = routingResult.result
 
                 if (!coroutineContext[Job]!!.isCancelled) {
@@ -267,6 +280,6 @@ class ToolCallRouter(
     private sealed interface DispatchDecision {
         data class Rejected(val result: ToolResult.Failure) : DispatchDecision
         data class AwaitingConfirmation(val result: ToolResult.Success) : DispatchDecision
-        data object Dispatch : DispatchDecision
+        data class Dispatch(val intentPlan: IntentDispatchPlan) : DispatchDecision
     }
 }
