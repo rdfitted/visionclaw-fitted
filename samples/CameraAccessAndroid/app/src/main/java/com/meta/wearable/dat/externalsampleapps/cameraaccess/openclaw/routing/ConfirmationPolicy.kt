@@ -19,7 +19,8 @@ object ConfirmationPolicy {
         return when (SettingsManager.confirmationPolicyFlow.value) {
             OperatorConfirmationPolicy.Minimal -> Tier.Implicit
             OperatorConfirmationPolicy.Standard -> intentType.standardTier(sessionState)
-            OperatorConfirmationPolicy.AlwaysConfirmOutbound -> intentType.alwaysOutboundTier()
+            OperatorConfirmationPolicy.AlwaysConfirmOutbound ->
+                intentType.alwaysOutboundTier(sessionState)
         }
     }
 
@@ -42,14 +43,9 @@ object ConfirmationPolicy {
             DeviceControl -> Tier.ConditionalConfirm(prompt(sessionState))
         }
 
-        fun alwaysOutboundTier(): Tier = when (this) {
-            Search,
-            ConfirmPending -> Tier.Implicit
-            OutboundMessage,
-            Transactional,
-            Destructive,
-            DeviceControl,
-            GeneralExecute -> Tier.AlwaysConfirm
+        fun alwaysOutboundTier(sessionState: SessionStateManager): Tier = when (this) {
+            OutboundMessage -> Tier.AlwaysConfirm
+            else -> standardTier(sessionState)
         }
 
         private fun prompt(sessionState: SessionStateManager): String = when (this) {

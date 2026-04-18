@@ -75,7 +75,8 @@ class ConfirmationPolicyTest {
         assertImplicit(call(task = "delete the draft note"), sessionStateManager)
 
         setConfirmationPolicy(OperatorConfirmationPolicy.AlwaysConfirmOutbound)
-        assertAlwaysConfirm(call(task = "summarize the meeting notes"), sessionStateManager)
+        assertAlwaysConfirm(call(task = "send the status update"), sessionStateManager)
+        assertImplicit(call(task = "summarize the meeting notes"), sessionStateManager)
     }
 
     @Test
