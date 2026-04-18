@@ -32,7 +32,7 @@ data class ConversationEntry(
 open class OpenClawBridge {
     companion object {
         private const val TAG = "OpenClawBridge"
-        private const val MAX_HISTORY_TURNS = 10
+        internal const val MAX_HISTORY_TURNS = 10
     }
 
     private val flowScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -67,6 +67,22 @@ open class OpenClawBridge {
     val conversationHistory: StateFlow<List<ConversationEntry>> = _conversationHistory.asStateFlow()
     val operatorSessionId: String
         get() = sessionKey
+
+    internal fun appendConversationEntry(
+        role: String,
+        content: String,
+        timestamp: Long = System.currentTimeMillis()
+    ) {
+        _conversationHistory.update { current ->
+            trimConversationHistory(
+                current + ConversationEntry(
+                    role = role,
+                    content = content,
+                    timestamp = timestamp
+                )
+            )
+        }
+    }
 
     suspend fun checkConnection() = withContext(Dispatchers.IO) {
         if (!GeminiConfig.isOpenClawConfigured) {
@@ -120,15 +136,7 @@ open class OpenClawBridge {
         val url = "${GeminiConfig.openClawHost}:${GeminiConfig.openClawPort}/v1/chat/completions"
 
         // Append user message
-        _conversationHistory.update { current ->
-            trimConversationHistory(
-                current + ConversationEntry(
-                    role = "user",
-                    content = task,
-                    timestamp = System.currentTimeMillis()
-                )
-            )
-        }
+        appendConversationEntry(role = "user", content = task)
 
         Log.d(TAG, "Sending ${conversationHistory.value.size} messages in conversation")
 
@@ -171,29 +179,13 @@ open class OpenClawBridge {
                 ?.optString("content", "")
 
             if (!content.isNullOrEmpty()) {
-                _conversationHistory.update { current ->
-                    trimConversationHistory(
-                        current + ConversationEntry(
-                            role = "assistant",
-                            content = content,
-                            timestamp = System.currentTimeMillis()
-                        )
-                    )
-                }
+                appendConversationEntry(role = "assistant", content = content)
                 Log.d(TAG, "Agent result: ${content.take(200)}")
                 setToolCallState(callId, ToolCallStatus.Completed(toolName))
                 return@withContext ToolResult.Success(content)
             }
 
-            _conversationHistory.update { current ->
-                trimConversationHistory(
-                    current + ConversationEntry(
-                        role = "assistant",
-                        content = responseBody,
-                        timestamp = System.currentTimeMillis()
-                    )
-                )
-            }
+            appendConversationEntry(role = "assistant", content = responseBody)
             Log.d(TAG, "Agent raw: ${responseBody.take(200)}")
             setToolCallState(callId, ToolCallStatus.Completed(toolName))
             return@withContext ToolResult.Success(responseBody)
