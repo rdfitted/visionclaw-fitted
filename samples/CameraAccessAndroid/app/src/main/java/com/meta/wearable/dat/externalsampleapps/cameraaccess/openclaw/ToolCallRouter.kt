@@ -27,7 +27,8 @@ class ToolCallRouter(
     private val bridge: OpenClawBridge,
     private val scope: CoroutineScope,
     private val sessionStateManager: SessionStateManager,
-    intentRouterOverride: IntentRouter? = null
+    intentRouterOverride: IntentRouter? = null,
+    private val pendingConfirmationTimeoutMs: Long = PENDING_CONFIRMATION_TIMEOUT_MS
 ) {
     companion object {
         private const val PENDING_CONFIRMATION_TIMEOUT_MS = 30_000L
@@ -401,7 +402,7 @@ class ToolCallRouter(
             reason = prompt
         )
         pendingTimeouts[call.id] = scope.launch {
-            delay(PENDING_CONFIRMATION_TIMEOUT_MS)
+            delay(pendingConfirmationTimeoutMs)
             val timedOut = synchronized(stateLock) {
                 cancelPendingActionLocked(call.id, "timeout")
             }

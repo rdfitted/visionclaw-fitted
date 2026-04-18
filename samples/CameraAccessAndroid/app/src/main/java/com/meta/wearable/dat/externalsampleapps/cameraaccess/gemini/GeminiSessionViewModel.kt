@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.PendingConfirmation
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionContextRefreshTracker
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawEventClient
@@ -57,6 +58,7 @@ class GeminiSessionViewModel : ViewModel() {
     }.apply {
         this.sessionStateManager = this@GeminiSessionViewModel.sessionStateManager
     }
+    private val sessionContextRefreshTracker = SessionContextRefreshTracker(sessionStateManager, geminiService)
     private val audioManager = AudioManager()
     private val eventClient = OpenClawEventClient()
     private var lastVideoFrameTime: Long = 0
@@ -76,6 +78,7 @@ class GeminiSessionViewModel : ViewModel() {
         }
 
         sessionStateManager.reset(openClawBridge.operatorSessionId)
+        sessionContextRefreshTracker.markCurrentContextSent()
         _uiState.value = _uiState.value.copy(isGeminiActive = true)
 
         // Wire audio callbacks
@@ -95,6 +98,7 @@ class GeminiSessionViewModel : ViewModel() {
 
         geminiService.onTurnComplete = {
             sessionStateManager.updateObjective(_uiState.value.userTranscript)
+            sessionContextRefreshTracker.sendRefreshIfChanged()
             _uiState.value = _uiState.value.copy(userTranscript = "")
         }
 
