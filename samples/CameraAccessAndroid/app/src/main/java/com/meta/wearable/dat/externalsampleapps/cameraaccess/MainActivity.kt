@@ -31,6 +31,7 @@ import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import timber.log.Timber
 
 class MainActivity : ComponentActivity() {
   companion object {
@@ -63,6 +64,10 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+
+    if (Timber.forest().isEmpty()) {
+      Timber.plant(Timber.DebugTree())
+    }
 
     // Initialize settings with app context
     SettingsManager.init(this)

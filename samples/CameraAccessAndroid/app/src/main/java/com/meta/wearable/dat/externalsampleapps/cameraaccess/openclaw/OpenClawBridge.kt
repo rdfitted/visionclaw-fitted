@@ -57,6 +57,8 @@ class OpenClawBridge {
 
     private var sessionKey: String = "agent:main:glass"
     private val conversationHistory = mutableListOf<JSONObject>()
+    val operatorSessionId: String
+        get() = sessionKey
 
     suspend fun checkConnection() = withContext(Dispatchers.IO) {
         if (!GeminiConfig.isOpenClawConfigured) {
