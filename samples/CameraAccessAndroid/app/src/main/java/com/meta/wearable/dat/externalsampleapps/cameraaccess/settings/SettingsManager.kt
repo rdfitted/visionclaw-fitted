@@ -3,14 +3,45 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.settings
 import android.content.Context
 import android.content.SharedPreferences
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.Secrets
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 object SettingsManager {
     private const val PREFS_NAME = "visionclaw_settings"
+    private const val KEY_RESPONSE_MODE = "responseMode"
+    private const val KEY_CONFIRMATION_POLICY = "confirmationPolicy"
+    private const val KEY_STRUCTURED_INTENTS_ENABLED = "structuredIntentsEnabled"
 
     private lateinit var prefs: SharedPreferences
+    private var preferenceChangeListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    private val _responseMode = MutableStateFlow(ResponseMode.NATURAL)
+    val responseModeFlow: StateFlow<ResponseMode> = _responseMode.asStateFlow()
+
+    private val _confirmationPolicy = MutableStateFlow(ConfirmationPolicy.NEVER)
+    val confirmationPolicyFlow: StateFlow<ConfirmationPolicy> = _confirmationPolicy.asStateFlow()
+
+    private val _structuredIntentsEnabled = MutableStateFlow(false)
+    val structuredIntentsEnabledFlow: StateFlow<Boolean> = _structuredIntentsEnabled.asStateFlow()
 
     fun init(context: Context) {
+        if (::prefs.isInitialized) {
+            preferenceChangeListener?.let(prefs::unregisterOnSharedPreferenceChangeListener)
+        }
+
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        refreshOperatorSettingsFlows()
+
+        preferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            when (key) {
+                KEY_RESPONSE_MODE,
+                KEY_CONFIRMATION_POLICY,
+                KEY_STRUCTURED_INTENTS_ENABLED -> refreshOperatorSettingsFlows()
+            }
+        }
+
+        preferenceChangeListener?.let(prefs::registerOnSharedPreferenceChangeListener)
     }
 
     var geminiAPIKey: String
@@ -52,8 +83,26 @@ object SettingsManager {
         get() = prefs.getBoolean("proactiveNotificationsEnabled", true)
         set(value) = prefs.edit().putBoolean("proactiveNotificationsEnabled", value).apply()
 
+    var responseMode: ResponseMode
+        get() = ResponseMode.fromStorageValue(prefs.getString(KEY_RESPONSE_MODE, null))
+        set(value) = prefs.edit().putString(KEY_RESPONSE_MODE, value.storageValue).apply()
+
+    var confirmationPolicy: ConfirmationPolicy
+        get() = ConfirmationPolicy.fromStorageValue(prefs.getString(KEY_CONFIRMATION_POLICY, null))
+        set(value) = prefs.edit().putString(KEY_CONFIRMATION_POLICY, value.storageValue).apply()
+
+    var structuredIntentsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_STRUCTURED_INTENTS_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_STRUCTURED_INTENTS_ENABLED, value).apply()
+
     fun resetAll() {
         prefs.edit().clear().apply()
+    }
+
+    private fun refreshOperatorSettingsFlows() {
+        _responseMode.value = responseMode
+        _confirmationPolicy.value = confirmationPolicy
+        _structuredIntentsEnabled.value = structuredIntentsEnabled
     }
 
     const val DEFAULT_SYSTEM_PROMPT = """You are Hex, Ryan's embedded AI operator.

@@ -2,11 +2,18 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw
 
 import android.util.Log
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.gemini.GeminiConfig
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.ToolCallId
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -21,14 +28,21 @@ class OpenClawBridge {
         private const val MAX_HISTORY_TURNS = 10
     }
 
-    private val _lastToolCallStatus = MutableStateFlow<ToolCallStatus>(ToolCallStatus.Idle)
-    val lastToolCallStatus: StateFlow<ToolCallStatus> = _lastToolCallStatus.asStateFlow()
+    private val flowScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    private val _toolCallStates = MutableStateFlow<Map<ToolCallId, ToolCallState>>(emptyMap())
+    val toolCallStates: StateFlow<Map<ToolCallId, ToolCallState>> = _toolCallStates.asStateFlow()
+    val lastToolCallStatus: StateFlow<ToolCallStatus> = toolCallStates
+        .map(Map<ToolCallId, ToolCallState>::latestStatus)
+        .stateIn(flowScope, SharingStarted.Eagerly, ToolCallStatus.Idle)
 
     private val _connectionState = MutableStateFlow<OpenClawConnectionState>(OpenClawConnectionState.NotConfigured)
     val connectionState: StateFlow<OpenClawConnectionState> = _connectionState.asStateFlow()
 
-    fun setToolCallStatus(status: ToolCallStatus) {
-        _lastToolCallStatus.value = status
+    fun setToolCallState(callId: ToolCallId, status: ToolCallStatus) {
+        _toolCallStates.update { current ->
+            current + (callId to ToolCallState(status = status))
+        }
     }
 
     private val client = OkHttpClient.Builder()
@@ -82,10 +96,11 @@ class OpenClawBridge {
     }
 
     suspend fun delegateTask(
+        callId: ToolCallId,
         task: String,
         toolName: String = "execute"
     ): ToolResult = withContext(Dispatchers.IO) {
-        _lastToolCallStatus.value = ToolCallStatus.Executing(toolName)
+        setToolCallState(callId, ToolCallStatus.Executing(toolName))
 
         val url = "${GeminiConfig.openClawHost}:${GeminiConfig.openClawPort}/v1/chat/completions"
 
@@ -132,7 +147,7 @@ class OpenClawBridge {
 
             if (statusCode !in 200..299) {
                 Log.d(TAG, "Chat failed: HTTP $statusCode - ${responseBody.take(200)}")
-                _lastToolCallStatus.value = ToolCallStatus.Failed(toolName, "HTTP $statusCode")
+                setToolCallState(callId, ToolCallStatus.Failed(toolName, "HTTP $statusCode"))
                 return@withContext ToolResult.Failure("Agent returned HTTP $statusCode")
             }
 
@@ -148,7 +163,7 @@ class OpenClawBridge {
                     put("content", content)
                 })
                 Log.d(TAG, "Agent result: ${content.take(200)}")
-                _lastToolCallStatus.value = ToolCallStatus.Completed(toolName)
+                setToolCallState(callId, ToolCallStatus.Completed(toolName))
                 return@withContext ToolResult.Success(content)
             }
 
@@ -157,11 +172,11 @@ class OpenClawBridge {
                 put("content", responseBody)
             })
             Log.d(TAG, "Agent raw: ${responseBody.take(200)}")
-            _lastToolCallStatus.value = ToolCallStatus.Completed(toolName)
+            setToolCallState(callId, ToolCallStatus.Completed(toolName))
             return@withContext ToolResult.Success(responseBody)
         } catch (e: Exception) {
             Log.e(TAG, "Agent error: ${e.message}")
-            _lastToolCallStatus.value = ToolCallStatus.Failed(toolName, e.message ?: "Unknown")
+            setToolCallState(callId, ToolCallStatus.Failed(toolName, e.message ?: "Unknown"))
             return@withContext ToolResult.Failure("Agent error: ${e.message}")
         }
     }
