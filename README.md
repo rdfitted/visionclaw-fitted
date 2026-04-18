@@ -1,4 +1,6 @@
-# VisionClaw
+# VisionClaw (fitted)
+
+> **Fork notice:** This is a personal fork maintained by [@rdfitted](https://github.com/rdfitted) at [rdfitted/visionclaw-fitted](https://github.com/rdfitted/visionclaw-fitted). The original project is [Intent-Lab/VisionClaw](https://github.com/Intent-Lab/VisionClaw) — all credit for the core design and implementation goes to the Intent Lab team. This fork adds personal customizations (Hex operator persona, OpenClaw integration tweaks, project DNA tooling) and is not affiliated with or endorsed by the original authors.
 
 ![VisionClaw](assets/teaserimage.png)
 
