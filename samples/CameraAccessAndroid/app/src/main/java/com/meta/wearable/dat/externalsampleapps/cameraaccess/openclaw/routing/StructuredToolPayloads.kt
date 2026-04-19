@@ -78,6 +78,7 @@ internal object StructuredToolPayloads {
 
     private const val FAST_MESSAGE_MAX_CHARS = 120
     private const val FAST_MESSAGE_MAX_WORDS = 18
+    private const val MIN_PHONE_SUFFIX_DIGITS = 7
 
     private val whitespaceRegex = Regex("""\s+""")
     private val taskLineBreakRegex = Regex("""[\r\n]+""")
@@ -318,9 +319,10 @@ internal object StructuredToolPayloads {
             EntityKind.PHONE -> {
                 val recipientDigits = recipient.filter(Char::isDigit)
                 val entityDigits = entity.value.filter(Char::isDigit)
-                recipientDigits.isNotEmpty() &&
-                    entityDigits.isNotEmpty() &&
-                    (recipientDigits.endsWith(entityDigits) || entityDigits.endsWith(recipientDigits))
+                recipientDigits.length >= MIN_PHONE_SUFFIX_DIGITS &&
+                    entityDigits.length >= MIN_PHONE_SUFFIX_DIGITS &&
+                    recipientDigits.takeLast(MIN_PHONE_SUFFIX_DIGITS) ==
+                    entityDigits.takeLast(MIN_PHONE_SUFFIX_DIGITS)
             }
             EntityKind.PROPER_NOUN -> {
                 val recipientTokens = recipient

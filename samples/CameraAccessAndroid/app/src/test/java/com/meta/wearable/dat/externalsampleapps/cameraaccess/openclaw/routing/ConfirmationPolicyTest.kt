@@ -227,6 +227,48 @@ class ConfirmationPolicyTest {
     }
 
     @Test
+    fun sendMessageToolMatchesPhoneRecipientsByLastSevenDigits() {
+        val sessionStateManager = SessionStateManager(TestBridge()).apply {
+            reset("session-1")
+            observeText("Reach Alex at +1 (808) 555-1234")
+        }
+
+        assertImplicit(
+            GeminiFunctionCall(
+                id = "send-known-phone-contact",
+                name = "send_message",
+                args = mapOf(
+                    "recipient" to "5551234",
+                    "content" to "Running 5 late",
+                    "channel" to "sms"
+                )
+            ),
+            sessionStateManager
+        )
+    }
+
+    @Test
+    fun sendMessageToolRequiresAtLeastSevenDigitsForPhoneRecipientMatches() {
+        val sessionStateManager = SessionStateManager(TestBridge()).apply {
+            reset("session-1")
+            observeText("Reach Alex at +1 (808) 555-1234")
+        }
+
+        assertAlwaysConfirm(
+            GeminiFunctionCall(
+                id = "send-short-phone-suffix",
+                name = "send_message",
+                args = mapOf(
+                    "recipient" to "551234",
+                    "content" to "Running 5 late",
+                    "channel" to "sms"
+                )
+            ),
+            sessionStateManager
+        )
+    }
+
+    @Test
     fun reminderAndTaskToolsStayImplicit() {
         val sessionStateManager = SessionStateManager(TestBridge()).apply { reset("session-1") }
 
