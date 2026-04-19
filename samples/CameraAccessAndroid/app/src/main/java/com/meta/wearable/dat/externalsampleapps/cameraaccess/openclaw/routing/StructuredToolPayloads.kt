@@ -80,6 +80,7 @@ internal object StructuredToolPayloads {
     private const val FAST_MESSAGE_MAX_WORDS = 18
 
     private val whitespaceRegex = Regex("""\s+""")
+    private val taskLineBreakRegex = Regex("""[\r\n]+""")
     private val sensitiveContentRegex = Regex(
         """\b(password|passcode|pin|otp|one[- ]time code|verification code|ssn|social security|routing number|account number|bank account|credit card|debit card|cvv|cvc|wire transfer|crypto wallet|seed phrase|tax return|tax document)\b""",
         RegexOption.IGNORE_CASE
@@ -164,15 +165,17 @@ internal object StructuredToolPayloads {
     }
 
     fun buildSendMessageTask(payload: SendMessagePayload): String {
+        val recipient = escapeTaskLiteral(payload.recipient)
+        val content = escapeTaskLiteral(payload.content)
         return when (payload.channel) {
             MessageChannel.EMAIL ->
-                "Send an email to ${payload.recipient} with this content: \"${payload.content}\"."
+                "Send an email to $recipient with this content: \"$content\"."
             MessageChannel.SMS ->
-                "Send an SMS to ${payload.recipient}: \"${payload.content}\"."
+                "Send an SMS to $recipient: \"$content\"."
             MessageChannel.CHAT ->
-                "Send a chat message to ${payload.recipient}: \"${payload.content}\"."
+                "Send a chat message to $recipient: \"$content\"."
             null ->
-                "Send a message to ${payload.recipient}: \"${payload.content}\"."
+                "Send a message to $recipient: \"$content\"."
         }
     }
 
@@ -213,12 +216,16 @@ internal object StructuredToolPayloads {
     }
 
     fun buildSetReminderTask(payload: SetReminderPayload): String {
-        return "Set a reminder for \"${payload.whenText}\" to ${payload.what}."
+        val whenText = escapeTaskLiteral(payload.whenText)
+        val what = escapeTaskLiteral(payload.what)
+        return "Set a reminder for \"$whenText\" to $what."
     }
 
     fun buildSetReminderUndoPayload(payload: SetReminderPayload): Map<String, Any?> {
+        val whenText = escapeTaskLiteral(payload.whenText)
+        val what = escapeTaskLiteral(payload.what)
         return mapOf(
-            "task" to "Cancel the reminder \"${payload.what}\" scheduled for \"${payload.whenText}\".",
+            "task" to "Cancel the reminder \"$what\" scheduled for \"$whenText\".",
             OPERATOR_UNDO_KEY to true
         )
     }
@@ -256,23 +263,25 @@ internal object StructuredToolPayloads {
     }
 
     fun buildCaptureTaskTask(payload: CaptureTaskPayload): String {
+        val title = escapeTaskLiteral(payload.title)
         val details = buildList {
-            add("Capture a task titled \"${payload.title}\".")
+            add("Capture a task titled \"$title\".")
             payload.priority?.let { priority ->
                 add("Set priority to ${priority.taskLabel}.")
             }
             payload.notes?.let { notes ->
-                add("Notes: $notes.")
+                add("Notes: ${escapeTaskLiteral(notes)}.")
             }
         }
         return details.joinToString(" ")
     }
 
     fun buildCaptureTaskUndoPayload(payload: CaptureTaskPayload): Map<String, Any?> {
+        val title = escapeTaskLiteral(payload.title)
         val task = buildString {
-            append("Delete the task titled \"${payload.title}\".")
+            append("Delete the task titled \"$title\".")
             payload.notes?.let { notes ->
-                append(" Notes to match: $notes.")
+                append(" Notes to match: ${escapeTaskLiteral(notes)}.")
             }
         }
         return mapOf(
@@ -293,6 +302,14 @@ internal object StructuredToolPayloads {
             "capture_task" -> parseCaptureTaskPayload(call.args)?.let(::buildCaptureTaskTask)
             else -> null
         }
+    }
+
+    private fun escapeTaskLiteral(input: String): String {
+        return input
+            .trim()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace(taskLineBreakRegex, " ")
     }
 
     private fun recipientMatches(recipient: String, entity: Entity): Boolean {
