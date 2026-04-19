@@ -1,6 +1,14 @@
 {
-  "last_curated_at": null,
-  "last_curated_line": 0,
-  "total_curated": 0,
-  "curation_history": []
+  "last_curated_at": "2026-04-18T11:10:00Z",
+  "last_curated_line": 6,
+  "total_curated": 6,
+  "curated_hive_sessions": ["0947b987-4bdb-438e-b6a8-53415947a2a7"],
+  "curation_history": [
+    {
+      "date": "2026-04-18",
+      "entries_processed": 6,
+      "type": "curation",
+      "source_sessions": ["0947b987-4bdb-438e-b6a8-53415947a2a7"]
+    }
+  ]
 }

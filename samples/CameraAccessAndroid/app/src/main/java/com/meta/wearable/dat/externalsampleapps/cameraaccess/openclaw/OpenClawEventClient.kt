@@ -14,13 +14,23 @@ import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
 
+enum class OpenClawNotificationKind {
+    HEARTBEAT,
+    CRON
+}
+
+data class OpenClawNotification(
+    val kind: OpenClawNotificationKind,
+    val text: String
+)
+
 class OpenClawEventClient {
     companion object {
         private const val TAG = "OpenClawEventClient"
         private const val MAX_RECONNECT_DELAY_MS = 30_000L
     }
 
-    var onNotification: ((String) -> Unit)? = null
+    var onNotification: ((OpenClawNotification) -> Unit)? = null
 
     private var webSocket: WebSocket? = null
     private var isConnected = false
@@ -163,7 +173,12 @@ class OpenClawEventClient {
         if (silent) return
 
         Log.d(TAG, "Heartbeat notification: ${preview.take(100)}")
-        onNotification?.invoke("[Notification from your assistant] $preview")
+        onNotification?.invoke(
+            OpenClawNotification(
+                kind = OpenClawNotificationKind.HEARTBEAT,
+                text = "[Notification from your assistant] $preview"
+            )
+        )
     }
 
     private fun handleCronEvent(payload: JSONObject) {
@@ -176,7 +191,12 @@ class OpenClawEventClient {
         if (summary.isEmpty()) return
 
         Log.d(TAG, "Cron notification: ${summary.take(100)}")
-        onNotification?.invoke("[Scheduled update] $summary")
+        onNotification?.invoke(
+            OpenClawNotification(
+                kind = OpenClawNotificationKind.CRON,
+                text = "[Scheduled update] $summary"
+            )
+        )
     }
 
     private fun scheduleReconnect() {

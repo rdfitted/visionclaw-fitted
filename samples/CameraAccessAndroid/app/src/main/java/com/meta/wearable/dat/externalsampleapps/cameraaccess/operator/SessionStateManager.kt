@@ -1,8 +1,17 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.operator
 
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiFunctionCall
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolCallRouter
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.StructuredToolPayloads
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,6 +51,14 @@ data class ToolResultSummary(
     val timestampMs: Long
 )
 
+data class UndoableAction(
+    val toolCallId: String,
+    val toolName: String,
+    val undoPayload: Map<String, Any?>,
+    val createdAt: Long,
+    val expiresAt: Long
+)
+
 enum class ToolResultOutcome {
     Success,
     Failure
@@ -49,10 +66,12 @@ enum class ToolResultOutcome {
 
 class SessionStateManager(
     private val bridge: OpenClawBridge,
-    private val nowProvider: () -> Long = System::currentTimeMillis
+    private val nowProvider: () -> Long = System::currentTimeMillis,
+    private val undoWindowMs: Long = DEFAULT_UNDO_WINDOW_MS
 ) {
     companion object {
         private const val ENTITY_INACTIVITY_WINDOW_MS = 10 * 60 * 1000L
+        private const val DEFAULT_UNDO_WINDOW_MS = 30_000L
         private const val MAX_CONTEXT_TOKENS = 200
         private const val MAX_ENTITY_ITEMS = 6
         private const val MAX_TOOL_RESULT_ITEMS = 4
@@ -66,6 +85,10 @@ class SessionStateManager(
         private val phoneRegex = Regex("""\b(?:\+?\d[\d(). -]{6,}\d)\b""")
         private val properNounRegex = Regex("""\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b""")
         private val tokenRegex = Regex("""[A-Za-z0-9]+|[^\sA-Za-z0-9]""")
+        private val undoIntentRegex = Regex(
+            """^\s*(?:please\s+)?(?:undo|undo that|undo it|cancel that|cancel it|revert|revert that|revert it)\b""",
+            RegexOption.IGNORE_CASE
+        )
         private val properNounStopWords = setOf(
             "A",
             "An",
@@ -98,6 +121,9 @@ class SessionStateManager(
 
     private var currentSessionKey: String? = null
     private var toolCallRouter: ToolCallRouter? = null
+    private val undoScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val undoLock = Any()
+    private var undoExpirationJob: Job? = null
 
     val conversationHistory = bridge.conversationHistory
 
@@ -113,6 +139,9 @@ class SessionStateManager(
     private val _recentToolResults = MutableStateFlow<List<ToolResultSummary>>(emptyList())
     val recentToolResults: StateFlow<List<ToolResultSummary>> = _recentToolResults.asStateFlow()
 
+    private val _undoableAction = MutableStateFlow<UndoableAction?>(null)
+    val undoableAction: StateFlow<UndoableAction?> = _undoableAction.asStateFlow()
+
     fun setToolCallRouter(router: ToolCallRouter?) {
         toolCallRouter = router
     }
@@ -125,6 +154,7 @@ class SessionStateManager(
         _recentEntities.value = emptyList()
         _pendingConfirmation.value = null
         _recentToolResults.value = emptyList()
+        clearUndoableAction()
     }
 
     fun updateObjective(text: String?) {
@@ -176,6 +206,85 @@ class SessionStateManager(
 
     fun clearPendingConfirmation() {
         _pendingConfirmation.value = null
+    }
+
+    fun rememberUndoableAction(
+        toolCallId: String,
+        toolName: String,
+        undoPayload: Map<String, Any?>
+    ) {
+        val createdAt = nowProvider()
+        val action = UndoableAction(
+            toolCallId = toolCallId,
+            toolName = toolName,
+            undoPayload = undoPayload,
+            createdAt = createdAt,
+            expiresAt = createdAt + undoWindowMs
+        )
+        synchronized(undoLock) {
+            undoExpirationJob?.cancel()
+            _undoableAction.value = action
+            undoExpirationJob = undoScope.launch {
+                delay(undoWindowMs)
+                synchronized(undoLock) {
+                    val current = _undoableAction.value
+                    if (current != null && current.toolCallId == action.toolCallId) {
+                        _undoableAction.value = null
+                    }
+                    undoExpirationJob = null
+                }
+            }
+        }
+    }
+
+    fun clearUndoableAction() {
+        synchronized(undoLock) {
+            undoExpirationJob?.cancel()
+            undoExpirationJob = null
+            _undoableAction.value = null
+        }
+    }
+
+    fun invalidateUndoableAction(reason: String): UndoableAction? {
+        return synchronized(undoLock) {
+            val action = _undoableAction.value ?: return@synchronized null
+            undoExpirationJob?.cancel()
+            undoExpirationJob = null
+            _undoableAction.value = null
+            action
+        }
+    }
+
+    fun consumeUndoableAction(): UndoableAction? {
+        return synchronized(undoLock) {
+            val action = _undoableAction.value ?: return@synchronized null
+            if (action.expiresAt <= nowProvider()) {
+                undoExpirationJob?.cancel()
+                undoExpirationJob = null
+                _undoableAction.value = null
+                return@synchronized null
+            }
+
+            undoExpirationJob?.cancel()
+            undoExpirationJob = null
+            _undoableAction.value = null
+            action
+        }
+    }
+
+    fun matchesUndoIntent(call: GeminiFunctionCall): Boolean {
+        if (call.args[StructuredToolPayloads.OPERATOR_UNDO_KEY] == true) {
+            return false
+        }
+
+        val text = ((call.args["task"] as? String) ?: (call.args["query"] as? String))
+            ?.replace(Regex("""\s+"""), " ")
+            ?.trim()
+            .orEmpty()
+        if (text.isEmpty()) {
+            return false
+        }
+        return undoIntentRegex.containsMatchIn(text)
     }
 
     fun invalidatePendingConfirmations(reason: String) {
@@ -408,5 +517,10 @@ class SessionStateManager(
     private fun ToolResultOutcome.label(): String = when (this) {
         ToolResultOutcome.Success -> "ok"
         ToolResultOutcome.Failure -> "error"
+    }
+
+    fun shutdown() {
+        clearUndoableAction()
+        undoScope.cancel()
     }
 }

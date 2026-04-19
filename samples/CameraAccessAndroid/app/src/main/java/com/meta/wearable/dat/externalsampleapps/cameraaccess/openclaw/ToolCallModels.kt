@@ -113,6 +113,9 @@ object ToolDeclarations {
             put(executeJSON())
             put(searchWebJSON())
             put(confirmPendingJSON())
+            put(sendMessageJSON())
+            put(setReminderJSON())
+            put(captureTaskJSON())
         }
     }
 
@@ -173,6 +176,82 @@ object ToolDeclarations {
                     })
                 })
                 put("required", JSONArray().put("pendingActionId").put("confirm"))
+            })
+            put("behavior", "BLOCKING")
+        }
+    }
+
+    private fun sendMessageJSON(): JSONObject {
+        return JSONObject().apply {
+            put("name", "send_message")
+            put("description", "Send a short message when the recipient and content are already known. Use execute for broader messaging workflows or when you need app-specific logic.")
+            put("parameters", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("recipient", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Who should receive the message.")
+                    })
+                    put("content", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Exact message body to send.")
+                    })
+                    put("channel", JSONObject().apply {
+                        put("type", "string")
+                        put("enum", JSONArray().put("sms").put("chat").put("email"))
+                        put("description", "Optional delivery channel. Omit when the user did not specify one.")
+                    })
+                })
+                put("required", JSONArray().put("recipient").put("content"))
+            })
+            put("behavior", "BLOCKING")
+        }
+    }
+
+    private fun setReminderJSON(): JSONObject {
+        return JSONObject().apply {
+            put("name", "set_reminder")
+            put("description", "Create a reminder from a natural-language time and reminder text.")
+            put("parameters", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("when", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Natural-language time such as tomorrow at 3pm.")
+                    })
+                    put("what", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "What the reminder should say or accomplish.")
+                    })
+                })
+                put("required", JSONArray().put("when").put("what"))
+            })
+            put("behavior", "BLOCKING")
+        }
+    }
+
+    private fun captureTaskJSON(): JSONObject {
+        return JSONObject().apply {
+            put("name", "capture_task")
+            put("description", "Capture a to-do item or lightweight task without requiring a follow-up confirmation.")
+            put("parameters", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("title", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Short task title.")
+                    })
+                    put("priority", JSONObject().apply {
+                        put("type", "string")
+                        put("enum", JSONArray().put("low").put("med").put("high"))
+                        put("description", "Optional task priority.")
+                    })
+                    put("notes", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Optional supporting notes for the task.")
+                    })
+                })
+                put("required", JSONArray().put("title"))
             })
             put("behavior", "BLOCKING")
         }

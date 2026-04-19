@@ -9,6 +9,7 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.Co
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentDispatchPlan
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.IntentRouter
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.PendingConfirmationController
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.StructuredToolPayloads
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ToolRegistry
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -88,6 +89,7 @@ class ToolCallRouter(
         sessionStateManager = sessionStateManager,
         toolRegistry = ToolRegistry(
             bridge = bridge,
+            sessionStateManager = sessionStateManager,
             confirmPendingHandler = ConfirmPendingHandler(
                 sessionStateManager = sessionStateManager,
                 controller = pendingConfirmationController
@@ -99,7 +101,25 @@ class ToolCallRouter(
         call: GeminiFunctionCall,
         sendResponse: (JSONObject) -> Unit
     ) {
-        val invalidated = if (call.name != "confirm_pending") {
+        var effectiveCall = call
+        if (call.name != "confirm_pending" && sessionStateManager.matchesUndoIntent(call)) {
+            val undoableAction = sessionStateManager.consumeUndoableAction()
+            if (undoableAction == null) {
+                val result = ToolResult.Success("Nothing to undo right now.")
+                sessionStateManager.recordToolResult(call.name, result)
+                sendResponse(buildToolResponse(call.id, call.name, result))
+                return
+            }
+            effectiveCall = GeminiFunctionCall(
+                id = call.id,
+                name = "execute",
+                args = undoableAction.undoPayload
+            )
+        } else if (call.name != "confirm_pending") {
+            sessionStateManager.invalidateUndoableAction("superseded_by_new_proposal")
+        }
+
+        val invalidated = if (effectiveCall.name != "confirm_pending") {
             synchronized(stateLock) {
                 invalidatePendingActionLocked("superseded_by_new_proposal")
             }
@@ -110,9 +130,9 @@ class ToolCallRouter(
             bridge.setToolCallState(pendingAction.call.id, ToolCallStatus.Cancelled(pendingAction.call.name))
         }
 
-        val callId = call.id
-        val callName = call.name
-        val taskDesc = extractTaskDesc(call)
+        val callId = effectiveCall.id
+        val callName = effectiveCall.name
+        val taskDesc = extractTaskDesc(effectiveCall)
         sessionStateManager.observeText(taskDesc)
         val context = OperatorContext(
             sessionId = bridge.operatorSessionId,
@@ -155,7 +175,7 @@ class ToolCallRouter(
                 task = taskDesc
             )
             machineState = OperatorStateMachine.validate(machineState, callId)
-            val intentPlan = intentRouter.resolve(call)
+            val intentPlan = intentRouter.resolve(effectiveCall)
 
             if (machineState.circuitBreakerOpen) {
                 machineState = OperatorStateMachine.reject(
@@ -181,7 +201,7 @@ class ToolCallRouter(
                             id = callId,
                             reason = OperatorFallbackReason.CONFIRMATION_REQUIRED
                         )
-                        rememberPendingActionLocked(call, intentPlan, taskDesc, prompt)
+                        rememberPendingActionLocked(effectiveCall, intentPlan, taskDesc, prompt)
                         DispatchDecision.AwaitingConfirmation(buildPendingConfirmationResult(callId, prompt))
                     }
 
@@ -192,7 +212,7 @@ class ToolCallRouter(
                             id = callId,
                             reason = OperatorFallbackReason.CONFIRMATION_REQUIRED
                         )
-                        rememberPendingActionLocked(call, intentPlan, taskDesc, tier.prompt)
+                        rememberPendingActionLocked(effectiveCall, intentPlan, taskDesc, tier.prompt)
                         DispatchDecision.AwaitingConfirmation(buildPendingConfirmationResult(callId, tier.prompt))
                     }
 
@@ -226,7 +246,7 @@ class ToolCallRouter(
                 val result = executeResolvedIntent(
                     callId = callId,
                     callName = callName,
-                    call = call,
+                    call = effectiveCall,
                     intentPlan = intentPlan
                 )
 
@@ -349,6 +369,7 @@ class ToolCallRouter(
         return try {
             val routingResult = intentRouter.execute(call, intentPlan)
             val result = routingResult.result
+            updateUndoState(call, intentPlan.confirmationTier, result)
 
             synchronized(stateLock) {
                 routingResult.fallbackReason?.let { reason ->
@@ -477,8 +498,54 @@ class ToolCallRouter(
         }
 
         return (call.args["task"] as? String)?.takeIf(String::isNotBlank)
+            ?: StructuredToolPayloads.extractStructuredTask(call)
             ?: (call.args["query"] as? String)?.takeIf(String::isNotBlank)
             ?: ""
+    }
+
+    private fun updateUndoState(
+        call: GeminiFunctionCall,
+        confirmationTier: ConfirmationPolicy.Tier,
+        result: ToolResult
+    ) {
+        if (result !is ToolResult.Success) {
+            return
+        }
+
+        if (confirmationTier !is ConfirmationPolicy.Tier.Implicit) {
+            sessionStateManager.clearUndoableAction()
+            return
+        }
+
+        when (call.name) {
+            "set_reminder" -> {
+                val payload = StructuredToolPayloads.parseSetReminderPayload(call.args)
+                if (payload != null) {
+                    sessionStateManager.rememberUndoableAction(
+                        toolCallId = call.id,
+                        toolName = call.name,
+                        undoPayload = StructuredToolPayloads.buildSetReminderUndoPayload(payload)
+                    )
+                } else {
+                    sessionStateManager.clearUndoableAction()
+                }
+            }
+
+            "capture_task" -> {
+                val payload = StructuredToolPayloads.parseCaptureTaskPayload(call.args)
+                if (payload != null) {
+                    sessionStateManager.rememberUndoableAction(
+                        toolCallId = call.id,
+                        toolName = call.name,
+                        undoPayload = StructuredToolPayloads.buildCaptureTaskUndoPayload(payload)
+                    )
+                } else {
+                    sessionStateManager.clearUndoableAction()
+                }
+            }
+
+            else -> sessionStateManager.clearUndoableAction()
+        }
     }
 
     private data class PendingAction(

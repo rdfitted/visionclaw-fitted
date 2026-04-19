@@ -14,6 +14,7 @@ data class RoutingResult(
 
 data class IntentDispatchPlan(
     val handler: ToolHandler,
+    val dispatchedCall: GeminiFunctionCall,
     val fallbackReason: String? = null,
     val confirmationTier: ConfirmationPolicy.Tier = ConfirmationPolicy.Tier.Implicit
 )
@@ -23,7 +24,7 @@ class IntentRouter(
     private val sessionStateManager: SessionStateManager,
     private val structuredIntentsEnabledProvider: () -> Boolean = { SettingsManager.structuredIntentsEnabledFlow.value },
     private val genericHandler: ToolHandler = GenericExecuteHandler(bridge),
-    private val toolRegistry: ToolRegistry = ToolRegistry(bridge)
+    private val toolRegistry: ToolRegistry = ToolRegistry(bridge, sessionStateManager = sessionStateManager)
 ) {
     fun resolve(call: GeminiFunctionCall): IntentDispatchPlan {
         if (call.name != "confirm_pending" && !structuredIntentsEnabledProvider()) {
@@ -56,7 +57,7 @@ class IntentRouter(
     }
 
     suspend fun execute(call: GeminiFunctionCall, plan: IntentDispatchPlan): RoutingResult {
-        return fallback(call, plan.fallbackReason, plan.handler.execute(call))
+        return fallback(call, plan.fallbackReason, plan.handler.execute(plan.dispatchedCall))
     }
 
     private fun fallback(
@@ -90,8 +91,17 @@ class IntentRouter(
         handler: ToolHandler,
         fallbackReason: String? = null
     ): IntentDispatchPlan {
+        val dispatchedCall = when (fallbackReason) {
+            OperatorFallbackReason.KILL_SWITCH,
+            OperatorFallbackReason.NO_MATCHING_TOOL,
+            OperatorFallbackReason.HANDLER_UNAVAILABLE ->
+                StructuredToolPayloads.buildFallbackCall(call) ?: call
+            else -> call
+        }
+
         return IntentDispatchPlan(
             handler = handler,
+            dispatchedCall = dispatchedCall,
             fallbackReason = fallbackReason,
             confirmationTier = ConfirmationPolicy.evaluate(call, sessionStateManager)
         )
