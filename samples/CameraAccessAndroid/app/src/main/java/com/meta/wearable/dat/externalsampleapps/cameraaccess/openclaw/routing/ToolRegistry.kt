@@ -25,8 +25,8 @@ class ToolRegistry(
     init {
         register("execute", GenericExecuteHandler(bridge))
         register("search_web", SearchWebHandler(bridge))
-        sessionStateManager?.let { manager ->
-            register("send_message", SendMessageHandler(bridge, manager))
+        if (sessionStateManager != null) {
+            register("send_message", SendMessageHandler(bridge))
         }
         register("set_reminder", SetReminderHandler(bridge))
         register("capture_task", CaptureTaskHandler(bridge))

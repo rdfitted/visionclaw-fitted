@@ -3,7 +3,6 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.h
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiFunctionCall
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
-import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -13,8 +12,7 @@ class StructuredToolHandlersTest {
     @Test
     fun sendMessageHandlerRejectsMissingRecipient() = runBlocking {
         val bridge = RecordingBridge()
-        val sessionStateManager = SessionStateManager(bridge).apply { reset("session-1") }
-        val handler = SendMessageHandler(bridge, sessionStateManager)
+        val handler = SendMessageHandler(bridge)
 
         val result = handler.execute(
             GeminiFunctionCall(
@@ -32,11 +30,7 @@ class StructuredToolHandlersTest {
     @Test
     fun sendMessageHandlerDelegatesStructuredTask() = runBlocking {
         val bridge = RecordingBridge()
-        val sessionStateManager = SessionStateManager(bridge).apply {
-            reset("session-1")
-            observeText("Sam Carter sam@example.com")
-        }
-        val handler = SendMessageHandler(bridge, sessionStateManager)
+        val handler = SendMessageHandler(bridge)
 
         val result = handler.execute(
             GeminiFunctionCall(

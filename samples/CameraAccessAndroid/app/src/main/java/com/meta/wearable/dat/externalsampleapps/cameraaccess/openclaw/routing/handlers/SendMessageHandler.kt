@@ -5,11 +5,9 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawBr
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.StructuredToolPayloads
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.routing.ToolHandler
-import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 
 class SendMessageHandler(
-    private val bridge: OpenClawBridge,
-    private val sessionStateManager: SessionStateManager
+    private val bridge: OpenClawBridge
 ) : ToolHandler {
     override suspend fun execute(call: GeminiFunctionCall): ToolResult {
         return bridge.executeStructuredHandler(
@@ -19,9 +17,6 @@ class SendMessageHandler(
             invalidPayloadError = "Invalid send_message payload",
             invalidPayloadHint = "Provide recipient, content, and an optional channel of sms, chat, or email.",
             bridgeFailureHint = "Check the OpenClaw gateway connection and retry the message.",
-            beforeDelegate = { payload ->
-                StructuredToolPayloads.assessSendMessage(payload, sessionStateManager)
-            },
             buildTask = StructuredToolPayloads::buildSendMessageTask
         )
     }
