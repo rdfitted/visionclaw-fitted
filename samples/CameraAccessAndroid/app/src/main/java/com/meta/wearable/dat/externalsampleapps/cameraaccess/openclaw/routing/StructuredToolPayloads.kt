@@ -189,7 +189,8 @@ internal object StructuredToolPayloads {
 
     fun buildSendMessagePrompt(payload: SendMessagePayload): String {
         val channel = payload.channel?.taskLabel ?: "message"
-        return "Confirm sending this $channel to ${payload.recipient}."
+        val recipient = escapeTaskLiteral(payload.recipient)
+        return "Confirm sending this $channel to \"$recipient\"."
     }
 
     fun validateSetReminderArgs(args: Map<String, Any?>): ValidationIssue? {

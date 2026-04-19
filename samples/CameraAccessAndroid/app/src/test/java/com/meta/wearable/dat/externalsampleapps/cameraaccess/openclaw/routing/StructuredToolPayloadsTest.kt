@@ -21,6 +21,22 @@ class StructuredToolPayloadsTest {
     }
 
     @Test
+    fun sendMessagePromptEscapesAndQuotesRecipient() {
+        val prompt = StructuredToolPayloads.buildSendMessagePrompt(
+            SendMessagePayload(
+                recipient = "  Sam \"Lead\"\r\nHQ  ",
+                content = "hello",
+                channel = MessageChannel.SMS
+            )
+        )
+
+        assertEquals(
+            "Confirm sending this SMS to \"Sam \\\"Lead\\\" HQ\".",
+            prompt
+        )
+    }
+
+    @Test
     fun reminderTaskAndUndoPayloadEscapeTaskLiterals() {
         val payload = SetReminderPayload(
             whenText = "  tomorrow\r\n7pm  ",
