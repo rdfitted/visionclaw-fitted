@@ -2,17 +2,39 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.gemini
 
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawNotification
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.OpenClawNotificationKind
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.ResponseMode
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.operator.SessionStateManager
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertTrue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
 import okhttp3.Request
 import okhttp3.WebSocket
 import okio.ByteString
 import org.json.JSONObject
+import org.junit.After
+import org.junit.Rule
+import org.junit.rules.TestWatcher
+import org.junit.runner.Description
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class NotificationGateTest {
+    private val defaultResponseMode = SettingsManager.responseModeFlow.value
+
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
+
+    @After
+    fun resetResponseModeFlow() {
+        setResponseModeFlow(defaultResponseMode)
+    }
+
     @Test
     fun heartbeatNotificationsAreDroppedWhileConfirmationIsPending() {
         val harness = NotificationGateHarness()
@@ -91,6 +113,7 @@ class NotificationGateTest {
         private val sessionStateManager = extractSessionStateManager(viewModel)
 
         init {
+            setResponseModeFlow(ResponseMode.SILENT_ACT)
             setUiState(
                 viewModel,
                 GeminiUiState(
@@ -169,6 +192,14 @@ class NotificationGateTest {
     }
 
     @Suppress("UNCHECKED_CAST")
+    private fun setResponseModeFlow(mode: ResponseMode) {
+        val field = SettingsManager::class.java.getDeclaredField("_responseMode")
+        field.isAccessible = true
+        val flow = field.get(SettingsManager) as MutableStateFlow<ResponseMode>
+        flow.value = mode
+    }
+
+    @Suppress("UNCHECKED_CAST")
     private fun setGeminiConnectionState(
         viewModel: GeminiSessionViewModel,
         state: GeminiConnectionState
@@ -224,5 +255,18 @@ class NotificationGateTest {
 
         override fun cancel() {
         }
+    }
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class MainDispatcherRule : TestWatcher() {
+    private val dispatcher = UnconfinedTestDispatcher()
+
+    override fun starting(description: Description) {
+        Dispatchers.setMain(dispatcher)
+    }
+
+    override fun finished(description: Description) {
+        Dispatchers.resetMain()
     }
 }
