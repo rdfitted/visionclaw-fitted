@@ -337,13 +337,17 @@ internal object StructuredToolPayloads {
                     .split(whitespaceRegex)
                     .filter(String::isNotBlank)
                     .toSet()
-                recipientTokens.isNotEmpty() &&
-                    entityTokens.isNotEmpty() &&
-                    (
-                        recipientTokens == entityTokens ||
-                            recipientTokens.containsAll(entityTokens) ||
-                            entityTokens.containsAll(recipientTokens)
-                        )
+                if (recipientTokens.isEmpty() || entityTokens.isEmpty()) {
+                    false
+                } else {
+                    val exactMatch = recipientTokens == entityTokens
+                    val multiTokenSubsetMatch =
+                        recipientTokens.size >= 2 &&
+                            entityTokens.size >= 2 &&
+                            (recipientTokens.containsAll(entityTokens) ||
+                                entityTokens.containsAll(recipientTokens))
+                    exactMatch || multiTokenSubsetMatch
+                }
             }
         }
     }

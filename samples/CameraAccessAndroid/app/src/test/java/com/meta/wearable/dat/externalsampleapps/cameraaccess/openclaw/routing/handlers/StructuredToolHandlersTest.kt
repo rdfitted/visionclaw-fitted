@@ -106,7 +106,6 @@ class StructuredToolHandlersTest {
             return ToolResult.Success("ok")
         }
 
-        override fun resetSession() {
-        }
+        override fun resetSession() = Unit
     }
 }
