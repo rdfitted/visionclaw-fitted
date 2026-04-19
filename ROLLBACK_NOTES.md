@@ -8,7 +8,7 @@ Per-issue rollback procedures for the feature set landed on `feat/operator-layer
 
 ## #12 `send_message` (Tiered)
 - Location: `openclaw/routing/handlers/SendMessageHandler.kt` + declaration in `openclaw/ToolCallModels.kt` + policy mapping in `ConfirmationPolicy.kt`.
-- Rollback: remove `SendMessageHandler` registration from `ToolRegistry`. Fallback path gracefully returns `unknown_tool`.
+- Rollback: remove `SendMessageHandler` registration from `ToolRegistry`. `IntentRouter` rewrites structured payloads through the generic `execute` fallback, so dispatch still works but no longer benefits from the tiered `send_message` validation path.
 
 ## #13 `set_reminder` (Tier 3)
 - Location: `openclaw/routing/handlers/SetReminderHandler.kt`.
