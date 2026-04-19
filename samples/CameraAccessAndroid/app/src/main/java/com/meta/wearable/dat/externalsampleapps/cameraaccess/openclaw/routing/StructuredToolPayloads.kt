@@ -87,7 +87,7 @@ internal object StructuredToolPayloads {
         RegexOption.IGNORE_CASE
     )
     private val groupRecipientRegex = Regex(
-        """[,/&+]|\b(and|team|group|everyone|everybody|all|folks|channel|thread|room)\b""",
+        """[,/&]|(?<!\S)\+(?!\S)|\b(and|team|group|everyone|everybody|all|folks|channel|thread|room)\b""",
         RegexOption.IGNORE_CASE
     )
     private val ambiguousRecipientRegex = Regex(
@@ -112,7 +112,14 @@ internal object StructuredToolPayloads {
             )
         }
 
-        val rawChannel = (args["channel"] as? String)?.trim()
+        val channelArg = args["channel"]
+        if (channelArg != null && channelArg !is String) {
+            return ValidationIssue(
+                error = "Invalid channel argument",
+                hint = "Channel must be a string: sms, chat, or email."
+            )
+        }
+        val rawChannel = (channelArg as? String)?.trim()
         if (!rawChannel.isNullOrEmpty() && MessageChannel.fromRaw(rawChannel) == null) {
             return ValidationIssue(
                 error = "Invalid channel argument",
@@ -240,7 +247,14 @@ internal object StructuredToolPayloads {
             )
         }
 
-        val rawPriority = (args["priority"] as? String)?.trim()
+        val priorityArg = args["priority"]
+        if (priorityArg != null && priorityArg !is String) {
+            return ValidationIssue(
+                error = "Invalid priority argument",
+                hint = "Priority must be a string: low, med, or high."
+            )
+        }
+        val rawPriority = (priorityArg as? String)?.trim()
         if (!rawPriority.isNullOrEmpty() && TaskPriority.fromRaw(rawPriority) == null) {
             return ValidationIssue(
                 error = "Invalid priority argument",
