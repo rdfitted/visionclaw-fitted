@@ -44,7 +44,7 @@ class StructuredToolHandlersTest {
             )
         )
 
-        assertEquals("Send an SMS to Sam Carter: \"On my way\".", bridge.lastTask)
+        assertEquals("Send an SMS to \"Sam Carter\": \"On my way\".", bridge.lastTask)
         assertEquals("send_message", bridge.lastToolName)
         assertEquals("ok", assertIs<ToolResult.Success>(result).result)
     }
@@ -85,7 +85,7 @@ class StructuredToolHandlersTest {
         )
 
         assertEquals(
-            "Capture a task titled \"File taxes\". Set priority to high. Notes: Pull the 1099s before Monday.",
+            "Capture a task titled \"File taxes\". Set priority to high. Notes: \"Pull the 1099s before Monday\".",
             bridge.lastTask
         )
         assertEquals("capture_task", bridge.lastToolName)

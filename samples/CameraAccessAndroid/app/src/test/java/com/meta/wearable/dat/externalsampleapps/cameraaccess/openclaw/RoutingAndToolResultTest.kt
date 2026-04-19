@@ -203,7 +203,7 @@ class RoutingAndToolResultTest {
         )
 
         assertEquals("kill_switch", result.fallbackReason)
-        assertEquals("Send an SMS to Sam Carter: \"Running 5 late\".", bridge.lastTask)
+        assertEquals("Send an SMS to \"Sam Carter\": \"Running 5 late\".", bridge.lastTask)
         assertEquals("send_message", bridge.lastToolName)
         assertEquals("ok", assertIs<ToolResult.Success>(result.result).result)
     }

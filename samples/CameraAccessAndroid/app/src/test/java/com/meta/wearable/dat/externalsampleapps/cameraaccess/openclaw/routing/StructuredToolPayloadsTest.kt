@@ -15,7 +15,7 @@ class StructuredToolPayloadsTest {
         )
 
         assertEquals(
-            "Send an SMS to Sam \\\\ Ops \\\"Lead\\\" HQ: \"Path C:\\\\tmp Say \\\"go\\\"\".",
+            "Send an SMS to \"Sam \\\\ Ops \\\"Lead\\\" HQ\": \"Path C:\\\\tmp Say \\\"go\\\"\".",
             task
         )
     }
@@ -28,7 +28,7 @@ class StructuredToolPayloadsTest {
         )
 
         assertEquals(
-            "Set a reminder for \"tomorrow 7pm\" to review C:\\\\docs and say \\\"done\\\".",
+            "Set a reminder for \"tomorrow 7pm\" to \"review C:\\\\docs and say \\\"done\\\"\".",
             StructuredToolPayloads.buildSetReminderTask(payload)
         )
         assertEquals(
@@ -46,11 +46,11 @@ class StructuredToolPayloadsTest {
         )
 
         assertEquals(
-            "Capture a task titled \"Ship \\\"alpha\\\" build\". Set priority to high. Notes: Path C:\\\\drop notify QA.",
+            "Capture a task titled \"Ship \\\"alpha\\\" build\". Set priority to high. Notes: \"Path C:\\\\drop notify QA\".",
             StructuredToolPayloads.buildCaptureTaskTask(payload)
         )
         assertEquals(
-            "Delete the task titled \"Ship \\\"alpha\\\" build\". Notes to match: Path C:\\\\drop notify QA.",
+            "Delete the task titled \"Ship \\\"alpha\\\" build\". Notes to match: \"Path C:\\\\drop notify QA\".",
             StructuredToolPayloads.buildCaptureTaskUndoPayload(payload)["task"]
         )
     }

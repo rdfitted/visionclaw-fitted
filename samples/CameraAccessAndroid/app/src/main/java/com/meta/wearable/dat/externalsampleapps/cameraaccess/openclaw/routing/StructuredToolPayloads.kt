@@ -177,13 +177,13 @@ internal object StructuredToolPayloads {
         val content = escapeTaskLiteral(payload.content)
         return when (payload.channel) {
             MessageChannel.EMAIL ->
-                "Send an email to $recipient with this content: \"$content\"."
+                "Send an email to \"$recipient\" with this content: \"$content\"."
             MessageChannel.SMS ->
-                "Send an SMS to $recipient: \"$content\"."
+                "Send an SMS to \"$recipient\": \"$content\"."
             MessageChannel.CHAT ->
-                "Send a chat message to $recipient: \"$content\"."
+                "Send a chat message to \"$recipient\": \"$content\"."
             null ->
-                "Send a message to $recipient: \"$content\"."
+                "Send a message to \"$recipient\": \"$content\"."
         }
     }
 
@@ -226,7 +226,7 @@ internal object StructuredToolPayloads {
     fun buildSetReminderTask(payload: SetReminderPayload): String {
         val whenText = escapeTaskLiteral(payload.whenText)
         val what = escapeTaskLiteral(payload.what)
-        return "Set a reminder for \"$whenText\" to $what."
+        return "Set a reminder for \"$whenText\" to \"$what\"."
     }
 
     fun buildSetReminderUndoPayload(payload: SetReminderPayload): Map<String, Any?> {
@@ -262,6 +262,14 @@ internal object StructuredToolPayloads {
             )
         }
 
+        val notesArg = args["notes"]
+        if (notesArg != null && notesArg !is String) {
+            return ValidationIssue(
+                error = "Invalid notes argument",
+                hint = "Notes must be a string."
+            )
+        }
+
         return null
     }
 
@@ -285,7 +293,7 @@ internal object StructuredToolPayloads {
                 add("Set priority to ${priority.taskLabel}.")
             }
             payload.notes?.let { notes ->
-                add("Notes: ${escapeTaskLiteral(notes)}.")
+                add("Notes: \"${escapeTaskLiteral(notes)}\".")
             }
         }
         return details.joinToString(" ")
@@ -296,7 +304,7 @@ internal object StructuredToolPayloads {
         val task = buildString {
             append("Delete the task titled \"$title\".")
             payload.notes?.let { notes ->
-                append(" Notes to match: ${escapeTaskLiteral(notes)}.")
+                append(" Notes to match: \"${escapeTaskLiteral(notes)}\".")
             }
         }
         return mapOf(
